@@ -1,0 +1,22 @@
+name: BeaconWar
+version: ${project.version}
+main: com.beaconwar.BeaconWarPlugin
+api-version: '1.20'
+description: Team-based beacon control game
+author: BeaconWar Team
+
+commands:
+  beaconwar:
+    description: Main command for Beacon War
+    aliases: [bw]
+    usage: /<command> [setup|start|stop|join|status]
+    permission: beaconwar.use
+
+permissions:
+  beaconwar.use:
+    description: Allows use of basic Beacon War commands
+    default: true
+  beaconwar.admin:
+    description: Allows use of admin commands
+    default: op
+

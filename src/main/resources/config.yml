@@ -1,0 +1,49 @@
+# Beacon War Configuration
+
+# Distance between beacons (in blocks)
+# Default: 200 (for large-scale games)
+# Set lower for testing: 10-20
+beacon-spacing: 200
+
+# Number of beacons on each side (total = 2*beacons-per-side + 1)
+# Default: 5 (creates beacons -5 to 5, total 11 beacons)
+beacons-per-side: 5
+
+# Starting Y level for ground search when placing beacons
+# Default: 150
+ground-search-start-y: 150
+
+# Game Phase Settings
+# Duration of each phase in seconds (default: 600 = 10 minutes)
+# For testing: 60 = 1 minute
+phase-duration: 600
+
+# Score interval in seconds (default: 60 = 1 minute)
+# Teams get 1 point per beacon controlled every score interval
+# For testing: 10 seconds
+score-interval: 60000000
+
+# Mining fatigue levels near enemy beacons
+# Capturing period level (1-4, default: 2)
+capturing-fatigue-level: 1
+# Mining period level (1-4, default: 3)
+mining-fatigue-level: 3
+
+# Range in blocks to apply mining fatigue near enemy beacons (default: 20)
+mining-fatigue-range: 20
+
+# Partial Keep Inventory
+# Probability that each item drops on death (0.0 = keep all, 1.0 = drop all)
+# Default: 0.5 (50% chance to drop each item)
+death-drop-probability: 0.5
+
+# Beacon Protection
+# Radius around beacons where block placement is restricted (default: 5 blocks)
+beacon-protection-radius: 5
+
+# Castle Generation
+# Whether to spawn castles around beacons during setup (default: true)
+spawn-castles: true
+# Whether castle walls should have gate entrances (default: false)
+spawn-castle-gates: false
+
