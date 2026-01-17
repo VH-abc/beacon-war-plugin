@@ -534,13 +534,13 @@ public class GameManager {
                 if (fortune != null) {
                     pickaxe.addEnchantment(fortune, 2);
                 }
-                // Add Efficiency II for Nether games (helps mine netherrack faster)
+                // Add Efficiency for Nether games (helps mine netherrack faster)
                 boolean isNetherGame = beaconManager.getBeacon(0).getLocation().getWorld()
                         .getEnvironment() == org.bukkit.World.Environment.NETHER;
                 if (isNetherGame) {
                     Enchantment efficiency = Enchantment.getByKey(NamespacedKey.minecraft("efficiency"));
                     if (efficiency != null) {
-                        pickaxe.addEnchantment(efficiency, 2);
+                        pickaxe.addEnchantment(efficiency, 4);
                     }
                 }
                 player.getInventory().addItem(pickaxe);
@@ -657,9 +657,10 @@ public class GameManager {
                 continue;
             }
             
-            // Check if near enemy beacon
+            // Check if near enemy beacon (must be in same world)
             boolean nearEnemyBeacon = beaconManager.getAllBeacons().stream()
                     .filter(beacon -> beacon.getOwner() != TeamColor.NEUTRAL && beacon.getOwner() != playerTeam)
+                    .filter(beacon -> beacon.getLocation().getWorld().equals(player.getWorld()))
                     .anyMatch(beacon -> player.getLocation().distance(beacon.getLocation()) <= range);
             
             if (nearEnemyBeacon) {
