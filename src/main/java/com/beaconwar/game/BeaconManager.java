@@ -187,5 +187,63 @@ public class BeaconManager {
                 .min(Comparator.comparingInt(b -> Math.abs(b.getIndex())))  // Prefer beacons near index 0
                 .orElse(null);
     }
+    
+    /**
+     * Get the interpolated beacon index for a given X coordinate.
+     * Uses actual beacon positions to linearly interpolate between beacon indices.
+     * 
+     * @param playerX The player's X coordinate
+     * @return The interpolated beacon index (e.g., 1.5 = halfway between beacon 1 and 2)
+     *         Returns 0 if no beacons exist.
+     */
+    public double getInterpolatedBeaconIndex(double playerX) {
+        List<Beacon> sorted = getSortedBeacons();
+        if (sorted.isEmpty()) {
+            return 0;
+        }
+        
+        // If player is before the first beacon, extrapolate from first two
+        Beacon first = sorted.get(0);
+        if (playerX <= first.getLocation().getX()) {
+            if (sorted.size() < 2) {
+                return first.getIndex();
+            }
+            Beacon second = sorted.get(1);
+            double x1 = first.getLocation().getX();
+            double x2 = second.getLocation().getX();
+            double t = (playerX - x1) / (x2 - x1);
+            return first.getIndex() + t * (second.getIndex() - first.getIndex());
+        }
+        
+        // If player is after the last beacon, extrapolate from last two
+        Beacon last = sorted.get(sorted.size() - 1);
+        if (playerX >= last.getLocation().getX()) {
+            if (sorted.size() < 2) {
+                return last.getIndex();
+            }
+            Beacon secondLast = sorted.get(sorted.size() - 2);
+            double x1 = secondLast.getLocation().getX();
+            double x2 = last.getLocation().getX();
+            double t = (playerX - x1) / (x2 - x1);
+            return secondLast.getIndex() + t * (last.getIndex() - secondLast.getIndex());
+        }
+        
+        // Find which two beacons the player is between
+        for (int i = 0; i < sorted.size() - 1; i++) {
+            Beacon left = sorted.get(i);
+            Beacon right = sorted.get(i + 1);
+            double leftX = left.getLocation().getX();
+            double rightX = right.getLocation().getX();
+            
+            if (playerX >= leftX && playerX <= rightX) {
+                // Linear interpolation between the two beacon indices
+                double t = (playerX - leftX) / (rightX - leftX);
+                return left.getIndex() + t * (right.getIndex() - left.getIndex());
+            }
+        }
+        
+        // Fallback (shouldn't reach here)
+        return 0;
+    }
 }
 

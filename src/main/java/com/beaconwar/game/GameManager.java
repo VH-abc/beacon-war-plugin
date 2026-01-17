@@ -105,11 +105,16 @@ public class GameManager {
         int groundSearchStartY = plugin.getConfig().getInt("ground-search-start-y", 150);
         boolean spawnCastles = plugin.getConfig().getBoolean("spawn-castles", true);
         boolean spawnCastleGates = plugin.getConfig().getBoolean("spawn-castle-gates", false);
+        double netherSpacingMultiplier = plugin.getConfig().getDouble("nether-spacing-multiplier", 0.7);
         
-        spawnManager = new SpawnManager(beaconManager, spacing);
-        territoryManager = new TerritoryManager(beaconManager, spacing);
+        // Calculate effective spacing (may be reduced in Nether)
+        boolean isNether = player.getWorld().getEnvironment() == org.bukkit.World.Environment.NETHER;
+        int effectiveSpacing = isNether ? (int)(spacing * netherSpacingMultiplier) : spacing;
         
-        BeaconPlacer placer = new BeaconPlacer(player, beaconManager, spacing, beaconsPerSide, groundSearchStartY, spawnCastles, spawnCastleGates);
+        spawnManager = new SpawnManager(beaconManager, effectiveSpacing);
+        territoryManager = new TerritoryManager(beaconManager, effectiveSpacing);
+        
+        BeaconPlacer placer = new BeaconPlacer(player, beaconManager, spacing, beaconsPerSide, groundSearchStartY, spawnCastles, spawnCastleGates, netherSpacingMultiplier);
         boolean success = placer.placeAllBeacons();
         
         if (success) {
@@ -134,12 +139,31 @@ public class GameManager {
         lastAmmoSupplyTime = System.currentTimeMillis();
         scoreManager.reset();
         
+        // Check if game is in the Nether and give portal supplies
+        boolean isNether = beaconManager.getAllBeacons().iterator().next().getLocation().getWorld()
+                .getEnvironment() == org.bukkit.World.Environment.NETHER;
+        if (isNether) {
+            supplyNetherPortalItems();
+        }
+        
         Bukkit.broadcast(Component.text("[Beacon War] ", NamedTextColor.AQUA)
                 .append(Component.text("Game started! ", NamedTextColor.GREEN))
                 .append(Component.text("Phase: ", NamedTextColor.GRAY))
                 .append(Component.text(currentPhase.getDisplayName(), currentPhase.getColor())));
         
         announcePhase();
+    }
+    
+    /**
+     * Give all players obsidian and flint-and-steel for Nether portal building
+     */
+    private void supplyNetherPortalItems() {
+        for (Player player : Bukkit.getOnlinePlayers()) {
+            player.getInventory().addItem(new ItemStack(Material.OBSIDIAN, 10));
+            player.getInventory().addItem(new ItemStack(Material.FLINT_AND_STEEL, 1));
+        }
+        Bukkit.broadcast(Component.text("[Beacon War] ", NamedTextColor.LIGHT_PURPLE)
+                .append(Component.text("Nether game! All players received obsidian and flint-and-steel.", NamedTextColor.GOLD)));
     }
     
     public void stopGame() {
@@ -159,7 +183,7 @@ public class GameManager {
         long currentTime = System.currentTimeMillis();
         int phaseDuration = plugin.getConfig().getInt("phase-duration", 600) * 1000;
         int scoreInterval = plugin.getConfig().getInt("score-interval", 60) * 1000;
-        int ammoInterval = 60 * 1000; // 1 minute
+        int ammoInterval = 4 * 60 * 1000; // 1 minute
         
         // Check for phase change
         if (currentTime - phaseStartTime >= phaseDuration) {
@@ -341,12 +365,13 @@ public class GameManager {
     private void enforcePlayerSlotLimits(Player player) {
         org.bukkit.inventory.PlayerInventory inv = player.getInventory();
         
-        // Materials to limit - only red and blue wool/glass
+        // Materials to limit - red/blue wool/glass and torches
         Material[] limitedMaterials = {
             Material.RED_WOOL,
             Material.BLUE_WOOL,
             Material.RED_STAINED_GLASS,
-            Material.BLUE_STAINED_GLASS
+            Material.BLUE_STAINED_GLASS,
+            Material.TORCH
         };
         
         for (Material material : limitedMaterials) {
@@ -435,6 +460,9 @@ public class GameManager {
         int redBeacons = counts.get(TeamColor.RED);
         int blueBeacons = counts.get(TeamColor.BLUE);
         
+        // Load resistance levels from config (index = beacon count, value = resistance level)
+        List<Integer> resistanceLevels = plugin.getConfig().getIntegerList("comeback-resistance-levels");
+        
         for (Player player : Bukkit.getOnlinePlayers()) {
             TeamColor playerTeam = getPlayerTeam(player);
             if (playerTeam == TeamColor.NEUTRAL) {
@@ -444,11 +472,9 @@ public class GameManager {
             int teamBeacons = (playerTeam == TeamColor.RED) ? redBeacons : blueBeacons;
             int resistanceLevel = 0;
             
-            // Determine resistance level based on beacon count
-            if (teamBeacons <= 2) {
-                resistanceLevel = 2; // Resistance II
-            } else if (teamBeacons <= 3) {
-                resistanceLevel = 1; // Resistance I
+            // Look up resistance level from config array
+            if (teamBeacons < resistanceLevels.size()) {
+                resistanceLevel = resistanceLevels.get(teamBeacons);
             }
             
             // Apply resistance if applicable
@@ -496,12 +522,26 @@ public class GameManager {
                 player.getInventory().addItem(woolStack);
             }
             
-            // Supply Fortune II iron pickaxe
+            // Supply torches
+            if (!player.getInventory().contains(Material.TORCH)) {
+                player.getInventory().addItem(new ItemStack(Material.TORCH, 64));
+            }
+            
+            // Supply Fortune II iron pickaxe (with Efficiency II in Nether)
             if (!hasPickaxe(player.getInventory())) {
                 ItemStack pickaxe = new ItemStack(Material.IRON_PICKAXE);
                 Enchantment fortune = Enchantment.getByKey(NamespacedKey.minecraft("fortune"));
                 if (fortune != null) {
                     pickaxe.addEnchantment(fortune, 2);
+                }
+                // Add Efficiency II for Nether games (helps mine netherrack faster)
+                boolean isNetherGame = beaconManager.getBeacon(0).getLocation().getWorld()
+                        .getEnvironment() == org.bukkit.World.Environment.NETHER;
+                if (isNetherGame) {
+                    Enchantment efficiency = Enchantment.getByKey(NamespacedKey.minecraft("efficiency"));
+                    if (efficiency != null) {
+                        pickaxe.addEnchantment(efficiency, 2);
+                    }
                 }
                 player.getInventory().addItem(pickaxe);
             }
@@ -590,7 +630,7 @@ public class GameManager {
                 .build();
 
         // 50 damage (25 hearts); used to be 35
-        for (int i = 0; i < 10; i++) {
+        for (int i = 0; i < 3; i++) {
             meta.addEffect(effect1);
         }
         

@@ -2,7 +2,6 @@ package com.beaconwar.listeners;
 
 import com.beaconwar.BeaconWarPlugin;
 import com.beaconwar.game.GameManager;
-import com.beaconwar.game.GamePhase;
 import com.beaconwar.model.Beacon;
 import com.beaconwar.model.TeamColor;
 import net.kyori.adventure.text.Component;
@@ -13,7 +12,10 @@ import org.bukkit.block.Block;
 import org.bukkit.entity.Player;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.Listener;
+import org.bukkit.event.block.BlockBreakEvent;
+import org.bukkit.event.block.BlockExplodeEvent;
 import org.bukkit.event.block.BlockPlaceEvent;
+import org.bukkit.event.entity.EntityExplodeEvent;
 import org.bukkit.event.player.PlayerRespawnEvent;
 
 /**
@@ -59,6 +61,34 @@ public class BeaconChangeListener implements Listener {
             player.sendMessage(Component.text("[Beacon War] ", NamedTextColor.RED)
                     .append(Component.text("Cannot place blocks within 5 blocks of a beacon!", NamedTextColor.YELLOW)));
         }
+    }
+    
+    /**
+     * Prevent breaking of beacon blocks and their emerald bases
+     */
+    @EventHandler
+    public void onBlockBreak(BlockBreakEvent event) {
+        if (isProtectedBeaconBlock(event.getBlock().getLocation())) {
+            event.setCancelled(true);
+            event.getPlayer().sendMessage(Component.text("[Beacon War] ", NamedTextColor.RED)
+                    .append(Component.text("Beacon structures are indestructible!", NamedTextColor.YELLOW)));
+        }
+    }
+    
+    /**
+     * Protect beacon structures from entity explosions (creepers, TNT minecarts, withers, etc.)
+     */
+    @EventHandler
+    public void onEntityExplode(EntityExplodeEvent event) {
+        event.blockList().removeIf(block -> isProtectedBeaconBlock(block.getLocation()));
+    }
+    
+    /**
+     * Protect beacon structures from block explosions (TNT, beds in nether/end, respawn anchors)
+     */
+    @EventHandler
+    public void onBlockExplode(BlockExplodeEvent event) {
+        event.blockList().removeIf(block -> isProtectedBeaconBlock(block.getLocation()));
     }
     
     /**
@@ -113,6 +143,51 @@ public class BeaconChangeListener implements Listener {
      */
     private boolean isStainedGlass(Material material) {
         return material.name().endsWith("STAINED_GLASS");
+    }
+    
+    /**
+     * Check if a block location is part of a protected beacon structure.
+     * Protected blocks are:
+     * - The beacon block itself
+     * - The 3x3 emerald block base (one block below beacon, within ±1 x/z)
+     */
+    private boolean isProtectedBeaconBlock(Location loc) {
+        GameManager gameManager = plugin.getGameManager();
+        
+        if (!gameManager.areBeaconsInitialized()) {
+            return false;
+        }
+        
+        int blockX = loc.getBlockX();
+        int blockY = loc.getBlockY();
+        int blockZ = loc.getBlockZ();
+        
+        for (Beacon beacon : gameManager.getBeaconManager().getAllBeacons()) {
+            Location beaconLoc = beacon.getLocation();
+            
+            // Check if in same world
+            if (!loc.getWorld().equals(beaconLoc.getWorld())) {
+                continue;
+            }
+            
+            int beaconX = beaconLoc.getBlockX();
+            int beaconY = beaconLoc.getBlockY();
+            int beaconZ = beaconLoc.getBlockZ();
+            
+            // Check if this is the beacon block itself
+            if (blockX == beaconX && blockY == beaconY && blockZ == beaconZ) {
+                return true;
+            }
+            
+            // Check if this is part of the 3x3 emerald base (one block below beacon)
+            if (blockY == beaconY - 1 &&
+                blockX >= beaconX - 1 && blockX <= beaconX + 1 &&
+                blockZ >= beaconZ - 1 && blockZ <= beaconZ + 1) {
+                return true;
+            }
+        }
+        
+        return false;
     }
     
     /**

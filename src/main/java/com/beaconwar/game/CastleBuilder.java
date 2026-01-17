@@ -240,6 +240,33 @@ public class CastleBuilder {
             return new MaterialSet(Material.RED_TERRACOTTA, Material.ORANGE_TERRACOTTA);
         }
         
+        // === NETHER BIOMES ===
+        
+        // Nether Wastes - classic nether fortress style
+        if (biomeName.contains("nether_wastes")) {
+            return new MaterialSet(Material.NETHER_BRICKS, Material.RED_NETHER_BRICKS);
+        }
+        
+        // Crimson Forest - crimson fungal wood
+        if (biomeName.contains("crimson")) {
+            return new MaterialSet(Material.CRIMSON_PLANKS, Material.NETHER_WART_BLOCK);
+        }
+        
+        // Warped Forest - warped fungal wood
+        if (biomeName.contains("warped")) {
+            return new MaterialSet(Material.WARPED_PLANKS, Material.WARPED_WART_BLOCK);
+        }
+        
+        // Basalt Deltas - volcanic basalt and blackstone
+        if (biomeName.contains("basalt")) {
+            return new MaterialSet(Material.POLISHED_BASALT, Material.BLACKSTONE);
+        }
+        
+        // Soul Sand Valley - eerie blackstone with soul sand
+        if (biomeName.contains("soul")) {
+            return new MaterialSet(Material.POLISHED_BLACKSTONE_BRICKS, Material.SOUL_SAND);
+        }
+        
         // Default fallback - stone bricks
         return new MaterialSet(Material.STONE_BRICKS, Material.COBBLESTONE);
     }

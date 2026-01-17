@@ -5,6 +5,11 @@
 # Set lower for testing: 10-20
 beacon-spacing: 200
 
+# Nether spacing multiplier (applied to beacon-spacing when in Nether)
+# Default: 0.7 (e.g., 200 * 0.7 = 140 blocks in Nether)
+# The Nether is more compact, so smaller spacing works better
+nether-spacing-multiplier: 0.5
+
 # Number of beacons on each side (total = 2*beacons-per-side + 1)
 # Default: 5 (creates beacons -5 to 5, total 11 beacons)
 beacons-per-side: 5
@@ -21,7 +26,7 @@ phase-duration: 600
 # Score interval in seconds (default: 60 = 1 minute)
 # Teams get 1 point per beacon controlled every score interval
 # For testing: 10 seconds
-score-interval: 60000000
+score-interval: 60 #60000000
 
 # Mining fatigue levels near enemy beacons
 # Capturing period level (1-4, default: 2)
@@ -32,10 +37,25 @@ mining-fatigue-level: 3
 # Range in blocks to apply mining fatigue near enemy beacons (default: 20)
 mining-fatigue-range: 20
 
+# Comeback resistance levels by beacon count
+# Index = number of beacons controlled, Value = resistance level (0 = none, 1 = Resistance I, 2 = Resistance II, etc.)
+# Default: [2, 2, 2, 1, 0, 0, 0, 0, 0, 0, 0] (Res II at 0-2 beacons, Res I at 3 beacons, none at 4+)
+comeback-resistance-levels: [2, 2, 2, 1, 0, 0, 0, 0, 0, 0, 0]
+
 # Partial Keep Inventory
+# Drop mode: "territory" or "absolute_position"
+# - territory: 0% drops in home territory during capturing phase, else death-drop-probability
+# - absolute_position: drops scale linearly with distance into enemy territory (always applies)
+drop-mode: absolute_position
+
 # Probability that each item drops on death (0.0 = keep all, 1.0 = drop all)
+# Used by territory mode when outside home territory
 # Default: 0.5 (50% chance to drop each item)
 death-drop-probability: 0.5
+
+# For absolute_position mode: drop probability increase per beacon distance
+# 0.04 = 4% per beacon (at beacon 4's position = 16% drop rate)
+progressive-drop-fraction: 0.04
 
 # Beacon Protection
 # Radius around beacons where block placement is restricted (default: 5 blocks)

@@ -1,5 +1,7 @@
 package com.beaconwar.game;
 
+import java.util.concurrent.ThreadLocalRandom;
+
 import org.bukkit.Location;
 import org.bukkit.Material;
 import org.bukkit.World;
@@ -12,12 +14,14 @@ import net.kyori.adventure.text.Component;
 import net.kyori.adventure.text.format.NamedTextColor;
 
 /**
- * Handles beacon placement with water avoidance.
- * No more recursive function calls that make your head hurt!
+ * Handles beacon placement with water/lava avoidance.
+ * Supports both Overworld and Nether dimensions.
  */
 public class BeaconPlacer {
     
     private static final int MAX_FALLBACK_ATTEMPTS = 8;
+    private static final int NETHER_SEARCH_MIN_Y = 50;
+    private static final int NETHER_SEARCH_MAX_Y = 100;
     
     private final Player player;
     private final BeaconManager beaconManager;
@@ -26,29 +30,49 @@ public class BeaconPlacer {
     private final int beaconsPerSide;
     private final boolean spawnCastles;
     private final boolean spawnCastleGates;
+    private final boolean isNether;
     
-    public BeaconPlacer(Player player, BeaconManager beaconManager, int spacing, int beaconsPerSide, int groundSearchStartY, boolean spawnCastles, boolean spawnCastleGates) {
+    public BeaconPlacer(Player player, BeaconManager beaconManager, int spacing, int beaconsPerSide, int groundSearchStartY, boolean spawnCastles, boolean spawnCastleGates, double netherSpacingMultiplier) {
         this.player = player;
         this.beaconManager = beaconManager;
-        this.spacing = spacing;
         this.beaconsPerSide = beaconsPerSide;
-        this.groundSearchStartY = groundSearchStartY;
         this.spawnCastles = spawnCastles;
         this.spawnCastleGates = spawnCastleGates;
+        
+        // Detect Nether environment
+        this.isNether = player.getWorld().getEnvironment() == World.Environment.NETHER;
+        
+        // Apply spacing multiplier for Nether
+        this.spacing = isNether ? (int)(spacing * netherSpacingMultiplier) : spacing;
+        
+        // In Nether, groundSearchStartY is randomized per-beacon; store the Overworld value
+        this.groundSearchStartY = groundSearchStartY;
+    }
+    
+    /**
+     * Get the search start Y for current dimension.
+     * In Nether, returns a random Y between 50-100 for terrain variety.
+     */
+    private int getSearchStartY() {
+        if (isNether) {
+            return ThreadLocalRandom.current().nextInt(NETHER_SEARCH_MIN_Y, NETHER_SEARCH_MAX_Y + 1);
+        }
+        return groundSearchStartY;
     }
     
     /**
      * Place all 11 beacons in a line
      */
     public boolean placeAllBeacons() {
+        String dimensionName = isNether ? "Nether" : "Overworld";
         player.sendMessage(Component.text("[Beacon War] ", NamedTextColor.GRAY)
-                .append(Component.text("Starting beacon placement...", NamedTextColor.YELLOW)));
+                .append(Component.text("Starting beacon placement in " + dimensionName + "...", NamedTextColor.YELLOW)));
         
         Location spawnPoint = player.getLocation();
         World world = spawnPoint.getWorld();
         
         // Place beacon 0 at spawn
-        Location beacon0Loc = findGround(world, spawnPoint.getBlockX(), groundSearchStartY, spawnPoint.getBlockZ());
+        Location beacon0Loc = findGroundForDimension(world, spawnPoint.getBlockX(), getSearchStartY(), spawnPoint.getBlockZ());
         if (beacon0Loc == null) {
             player.sendMessage(Component.text("[Beacon War] ", NamedTextColor.RED)
                     .append(Component.text("Failed to find ground for beacon 0!", NamedTextColor.YELLOW)));
@@ -86,31 +110,33 @@ public class BeaconPlacer {
             prevLoc = loc;
         }
         
+        String hazardType = isNether ? "lava" : "water";
         player.sendMessage(Component.text("[Beacon War] ", NamedTextColor.AQUA)
-                .append(Component.text("Beacon line deployed with water avoidance!", NamedTextColor.GREEN)));
+                .append(Component.text("Beacon line deployed with " + hazardType + " avoidance!", NamedTextColor.GREEN)));
         
         return true;
     }
     
     /**
-     * Place next beacon relative to previous, avoiding water
+     * Place next beacon relative to previous, avoiding water/lava
      */
     private Location placeNextBeacon(Location prevLoc, int index, boolean positive) {
         World world = prevLoc.getWorld();
         int prevX = prevLoc.getBlockX();
         int prevZ = prevLoc.getBlockZ();
         int direction = positive ? 1 : -1;
+        String hazardName = isNether ? "Lava" : "Water";
         
-        // List of (xMultiplier, zMultiplier, requireDry, message)
-        record Attempt(double xMultiplier, double zMultiplier, boolean requireDry, String message) {}
+        // List of (xMultiplier, zMultiplier, requireSafe, message)
+        record Attempt(double xMultiplier, double zMultiplier, boolean requireSafe, String message) {}
         
         java.util.List<Attempt> attemptsList = new java.util.ArrayList<>();
         
         // Initial attempts
         attemptsList.add(new Attempt(1, 0, true, null));
-        attemptsList.add(new Attempt(2, 0, true, "Water detected, trying 2x spacing for beacon " + index));
-        attemptsList.add(new Attempt(1, 1, true, "Water detected, trying Z+ offset for beacon " + index));
-        attemptsList.add(new Attempt(1, -1, true, "Water detected, trying Z- offset for beacon " + index));
+        attemptsList.add(new Attempt(2, 0, true, hazardName + " detected, trying 2x spacing for beacon " + index));
+        attemptsList.add(new Attempt(1, 1, true, hazardName + " detected, trying Z+ offset for beacon " + index));
+        attemptsList.add(new Attempt(1, -1, true, hazardName + " detected, trying Z- offset for beacon " + index));
         
         // Extended search: (1.1, 0), (1.2, 0), ..., (2.9, 0)
         for (double x = 1.1; x <= 2.9; x += 0.1) {
@@ -132,17 +158,20 @@ public class BeaconPlacer {
             attemptsList.add(new Attempt(2, z, true, null));
         }
         
-        // Last resort - place regardless of water
-        attemptsList.add(new Attempt(3, 0, false, "All positions have water! Placing beacon " + index + " at 3x spacing"));
+        // Last resort - place regardless of hazard
+        attemptsList.add(new Attempt(3, 0, false, "All positions have " + hazardName.toLowerCase() + "! Placing beacon " + index + " at 3x spacing"));
+        
+        // Get a random search Y for this beacon (only varies in Nether)
+        int searchY = getSearchStartY();
         
         for (Attempt attempt : attemptsList) {
             int tryX = (int)(prevX + (attempt.xMultiplier * spacing * direction));
             int tryZ = (int)(prevZ + (attempt.zMultiplier * spacing));
-            Location groundLoc = findGround(world, tryX, groundSearchStartY, tryZ);
+            Location groundLoc = findGroundForDimension(world, tryX, searchY, tryZ);
             
-            if (groundLoc != null && (!attempt.requireDry || !isWater(groundLoc))) {
+            if (groundLoc != null && (!attempt.requireSafe || !isHazard(groundLoc))) {
                 if (attempt.message != null) {
-                    NamedTextColor msgColor = attempt.requireDry ? NamedTextColor.GRAY : NamedTextColor.RED;
+                    NamedTextColor msgColor = attempt.requireSafe ? NamedTextColor.GRAY : NamedTextColor.RED;
                     player.sendMessage(Component.text("[Beacon War] ", msgColor)
                             .append(Component.text(attempt.message, NamedTextColor.YELLOW)));
                 }
@@ -168,7 +197,18 @@ public class BeaconPlacer {
     }
     
     /**
-     * Find solid ground below a position
+     * Find ground using the appropriate method for current dimension
+     */
+    private Location findGroundForDimension(World world, int x, int startY, int z) {
+        if (isNether) {
+            return findGroundNether(world, x, startY, z);
+        } else {
+            return findGround(world, x, startY, z);
+        }
+    }
+    
+    /**
+     * Find solid ground below a position (Overworld method)
      * Returns the location of the ground block itself (not the block above)
      */
     public static Location findGround(World world, int x, int startY, int z) {
@@ -189,11 +229,48 @@ public class BeaconPlacer {
     }
     
     /**
-     * Check if the ground block is water
+     * Find ground in the Nether dimension
+     * Searches for air over a solid block. If lava is found before finding
+     * valid air-over-solid, returns null (treated as hazard location).
+     * Returns the location of the ground block itself (not the block above)
      */
-    private boolean isWater(Location groundLoc) {
+    private static Location findGroundNether(World world, int x, int startY, int z) {
+        boolean foundAir = false;
+        
+        for (int y = startY; y > world.getMinHeight(); y--) {
+            Block block = world.getBlockAt(x, y, z);
+            Material type = block.getType();
+            
+            if (type.isAir() || type == Material.CAVE_AIR || type == Material.VOID_AIR) {
+                foundAir = true;
+            } else if (type == Material.LAVA) {
+                // Lava found before finding valid ground - treat as hazard
+                if (!foundAir) {
+                    return null;
+                }
+                // Lava found after air - this is a hazard location
+                return new Location(world, x, y, z);
+            } else if (foundAir) {
+                // Found solid block after air - this is valid ground
+                return new Location(world, x, y, z);
+            }
+            // Otherwise keep searching (we're still in solid ceiling)
+        }
+        return null;
+    }
+    
+    /**
+     * Check if the ground block is a hazard (water in Overworld, lava in Nether)
+     */
+    private boolean isHazard(Location groundLoc) {
         Block block = groundLoc.getBlock();
-        return block.getType() == Material.WATER;
+        Material type = block.getType();
+        
+        if (isNether) {
+            return type == Material.LAVA;
+        } else {
+            return type == Material.WATER;
+        }
     }
     
     /**
@@ -216,8 +293,9 @@ public class BeaconPlacer {
         // Place beacon at this location
         world.getBlockAt(x, y, z).setType(Material.BEACON);
         
-        // Clear column above for beam
-        for (int dy = 1; dy < 320 - y; dy++) {
+        // Clear column above for beam (use world max height)
+        int maxY = world.getMaxHeight();
+        for (int dy = 1; dy < maxY - y; dy++) {
             world.getBlockAt(x, y + dy, z).setType(Material.AIR);
         }
         
