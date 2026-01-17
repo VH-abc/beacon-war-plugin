@@ -11,6 +11,10 @@ commands:
     aliases: [bw]
     usage: /<command> [setup|start|stop|join|status]
     permission: beaconwar.use
+  nether:
+    description: Teleport to the Nether
+    usage: /<command>
+    permission: beaconwar.admin
 
 permissions:
   beaconwar.use:

@@ -1,6 +1,7 @@
 package com.beaconwar;
 
 import com.beaconwar.commands.BeaconWarCommand;
+import com.beaconwar.commands.NetherCommand;
 import com.beaconwar.game.GameManager;
 import com.beaconwar.listeners.BeaconChangeListener;
 import com.beaconwar.listeners.DeathListener;
@@ -20,6 +21,7 @@ public class BeaconWarPlugin extends JavaPlugin {
         
         // Register commands
         getCommand("beaconwar").setExecutor(new BeaconWarCommand(this));
+        getCommand("nether").setExecutor(new NetherCommand());
         
         // Register listeners
         getServer().getPluginManager().registerEvents(new BeaconChangeListener(this), this);

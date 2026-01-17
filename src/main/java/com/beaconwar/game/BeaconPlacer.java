@@ -71,8 +71,9 @@ public class BeaconPlacer {
         Location spawnPoint = player.getLocation();
         World world = spawnPoint.getWorld();
         
-        // Place beacon 0 at spawn
-        Location beacon0Loc = findGroundForDimension(world, spawnPoint.getBlockX(), getSearchStartY(), spawnPoint.getBlockZ());
+        // Place beacon 0 at spawn (use player's Y + 2 instead of random for beacon 0)
+        int beacon0SearchY = isNether ? spawnPoint.getBlockY() + 2 : groundSearchStartY;
+        Location beacon0Loc = findGroundForDimension(world, spawnPoint.getBlockX(), beacon0SearchY, spawnPoint.getBlockZ());
         if (beacon0Loc == null) {
             player.sendMessage(Component.text("[Beacon War] ", NamedTextColor.RED)
                     .append(Component.text("Failed to find ground for beacon 0!", NamedTextColor.YELLOW)));
