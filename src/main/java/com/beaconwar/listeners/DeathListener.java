@@ -157,8 +157,19 @@ public class DeathListener implements Listener {
      * Modes:
      * - "territory": 0% in home territory during capturing phase, else death-drop-probability
      * - "absolute_position": linear scaling based on distance into enemy territory (always applies)
+     * 
+     * Players in a different dimension than the beacons always keep their inventory.
      */
     private double calculateDropProbability(Player player) {
+        // Players in a different dimension than the beacons keep everything
+        BeaconManager beaconManager = plugin.getGameManager().getBeaconManager();
+        if (beaconManager != null && beaconManager.getBeacon(0) != null) {
+            World beaconWorld = beaconManager.getBeacon(0).getLocation().getWorld();
+            if (!player.getWorld().equals(beaconWorld)) {
+                return 0.0;
+            }
+        }
+        
         String dropMode = plugin.getConfig().getString("drop-mode", "territory");
         
         if (dropMode.equalsIgnoreCase("absolute_position")) {
