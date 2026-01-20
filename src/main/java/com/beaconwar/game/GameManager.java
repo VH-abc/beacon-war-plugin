@@ -377,10 +377,19 @@ public class GameManager {
     }
     
     /**
-     * Pause the game (stops all timers).
+     * Pause the game (stops all timers and beacon captures).
      */
     public void pauseGame() {
-        if (!gameActive || gamePaused) return;
+        if (!gameActive) {
+            Bukkit.broadcast(Component.text("[Beacon War] ", NamedTextColor.RED)
+                    .append(Component.text("Cannot pause: no game is active!", NamedTextColor.YELLOW)));
+            return;
+        }
+        if (gamePaused) {
+            Bukkit.broadcast(Component.text("[Beacon War] ", NamedTextColor.RED)
+                    .append(Component.text("Game is already paused!", NamedTextColor.YELLOW)));
+            return;
+        }
         
         gamePaused = true;
         pauseStartTime = System.currentTimeMillis();
@@ -393,7 +402,16 @@ public class GameManager {
      * Unpause the game (resumes all timers).
      */
     public void unpauseGame() {
-        if (!gameActive || !gamePaused) return;
+        if (!gameActive) {
+            Bukkit.broadcast(Component.text("[Beacon War] ", NamedTextColor.RED)
+                    .append(Component.text("Cannot unpause: no game is active!", NamedTextColor.YELLOW)));
+            return;
+        }
+        if (!gamePaused) {
+            Bukkit.broadcast(Component.text("[Beacon War] ", NamedTextColor.RED)
+                    .append(Component.text("Game is not paused!", NamedTextColor.YELLOW)));
+            return;
+        }
         
         long pauseDuration = System.currentTimeMillis() - pauseStartTime;
         totalPausedTime += pauseDuration;
@@ -415,19 +433,19 @@ public class GameManager {
             return;
         }
         
-        // Always update beacon ownership even when paused (so we can detect all-beacon capture)
-        beaconManager.updateAllBeaconOwnership();
-        
-        // Check for victory conditions (even when paused for all-beacon capture)
-        if (gameActive) {
-            checkVictoryConditions();
-        }
-        
-        // Skip timer-based updates when paused
+        // Skip most updates when paused (only update display)
         if (gamePaused) {
             updateActionBar();  // Still show action bar (with PAUSED indicator)
             updateScoreboard();
             return;
+        }
+        
+        // Update beacon ownership (only when not paused)
+        beaconManager.updateAllBeaconOwnership();
+        
+        // Check for victory conditions
+        if (gameActive) {
+            checkVictoryConditions();
         }
         
         long currentTime = System.currentTimeMillis();
@@ -515,29 +533,38 @@ public class GameManager {
     private void updateActionBar() {
         long currentTime = System.currentTimeMillis();
         int phaseDuration = plugin.getConfig().getInt("phase-duration", 600) * 1000;
-        long effectivePhaseStart = phaseStartTime + totalPausedTime;
+        
+        // Account for current pause time (if paused) in addition to completed pauses
+        long effectivePausedTime = totalPausedTime;
+        if (gamePaused) {
+            effectivePausedTime += (currentTime - pauseStartTime);
+        }
+        
+        long effectivePhaseStart = phaseStartTime + effectivePausedTime;
         long phaseTimeLeft = Math.max(0, (effectivePhaseStart + phaseDuration - currentTime) / 1000);
         
         // Calculate game time remaining (if time limit set)
         String gameTimeStr = "";
         if (gameDurationMs > 0) {
-            long effectiveGameStart = gameStartTime + totalPausedTime;
+            long effectiveGameStart = gameStartTime + effectivePausedTime;
             long gameTimeLeft = Math.max(0, (effectiveGameStart + gameDurationMs - currentTime) / 1000);
-            gameTimeStr = " | Game: " + formatTime(gameTimeLeft);
+            gameTimeStr = formatTime(gameTimeLeft) + " | ";
         }
         
         for (Player player : Bukkit.getOnlinePlayers()) {
             TeamColor playerTeam = getPlayerTeam(player);
             
-            // Base action bar with phase timer
+            // Base action bar: [Game Time] | [Phase Name] - [Phase Time]
             Component actionBar;
             if (gamePaused) {
                 actionBar = Component.text("PAUSED", NamedTextColor.RED)
-                        .append(Component.text(" - " + currentPhase.getDisplayName() + " - ", currentPhase.getColor()))
-                        .append(Component.text(formatTime(phaseTimeLeft) + gameTimeStr, NamedTextColor.WHITE));
+                        .append(Component.text(" - " + gameTimeStr, NamedTextColor.WHITE))
+                        .append(Component.text(currentPhase.getDisplayName(), currentPhase.getColor()))
+                        .append(Component.text(" - " + formatTime(phaseTimeLeft), NamedTextColor.WHITE));
             } else {
-                actionBar = Component.text(currentPhase.getDisplayName() + " - ", currentPhase.getColor())
-                        .append(Component.text(formatTime(phaseTimeLeft) + gameTimeStr, NamedTextColor.WHITE));
+                actionBar = Component.text(gameTimeStr, NamedTextColor.WHITE)
+                        .append(Component.text(currentPhase.getDisplayName(), currentPhase.getColor()))
+                        .append(Component.text(" - " + formatTime(phaseTimeLeft), NamedTextColor.WHITE));
             }
             
             // Add target beacon coordinates (neutral first, then enemy front)
