@@ -8,8 +8,8 @@ import java.util.Set;
 import org.bukkit.Bukkit;
 import org.bukkit.ChatColor;
 import org.bukkit.Material;
-import org.bukkit.entity.Player;
 import org.bukkit.World;
+import org.bukkit.entity.Player;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.EventPriority;
 import org.bukkit.event.Listener;
@@ -233,18 +233,31 @@ public class DeathListener implements Listener {
     }
     
     /**
-     * Give fire resistance when spawning in the Nether to help survive lava
+     * Give fire resistance when spawning in the Nether to help survive lava.
+     * Also reapply assigned resistance for team balancing.
      */
     @EventHandler
     public void onPlayerRespawn(PlayerRespawnEvent event) {
         // Schedule for next tick since respawn location may not be finalized yet
         plugin.getServer().getScheduler().runTask(plugin, () -> {
             Player player = event.getPlayer();
+            
+            // Fire resistance in Nether
             if (player.getWorld().getEnvironment() == World.Environment.NETHER) {
                 // Give 10 seconds (200 ticks) of fire resistance
                 PotionEffectType fireResistance = PotionEffectType.getByName("fire_resistance");
                 if (fireResistance != null) {
                     player.addPotionEffect(new PotionEffect(fireResistance, 200, 0));
+                }
+            }
+            
+            // Reapply assigned resistance (for team balancing)
+            int assignedResistance = plugin.getGameManager().getAssignedResistance(player.getName());
+            if (assignedResistance > 0) {
+                PotionEffectType resistanceType = PotionEffectType.getByName("resistance");
+                if (resistanceType != null) {
+                    // Apply for 2 seconds - will be refreshed by tick() if game is active
+                    player.addPotionEffect(new PotionEffect(resistanceType, 40, assignedResistance - 1));
                 }
             }
         });

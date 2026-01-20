@@ -15,6 +15,59 @@ commands:
     description: Teleport to the Nether
     usage: /<command>
     permission: beaconwar.admin
+  overworld:
+    description: Teleport to the Overworld
+    usage: /<command>
+    permission: beaconwar.admin
+  setup:
+    description: Set up beacons at your location
+    usage: /<command>
+    permission: beaconwar.admin
+  start:
+    description: Start the game
+    usage: /<command> [minutes]
+    permission: beaconwar.admin
+  stop:
+    description: Stop the game (no winner)
+    usage: /<command>
+    permission: beaconwar.admin
+  reset:
+    description: Full reset (clears beacons, keeps ELO)
+    usage: /<command>
+    permission: beaconwar.admin
+  end:
+    description: End game and determine winner
+    usage: /<command>
+    permission: beaconwar.admin
+  pause:
+    description: Pause all timers
+    usage: /<command>
+    permission: beaconwar.admin
+  unpause:
+    description: Resume the game
+    usage: /<command>
+    permission: beaconwar.admin
+  join:
+    description: Join a team
+    usage: /<command> <red|blue>
+    permission: beaconwar.use
+  resistance:
+    description: Set player's resistance level
+    usage: /<command> <player> <0-4>
+    permission: beaconwar.admin
+  elo:
+    description: View ELO ratings
+    usage: /<command> [player|leaderboard|predict]
+    permission: beaconwar.use
+  quicklaunch:
+    description: Auto setup, balance, countdown, start
+    aliases: [ql]
+    usage: /<command> [manual] [minutes]
+    permission: beaconwar.admin
+  status:
+    description: Show game status
+    usage: /<command>
+    permission: beaconwar.use
 
 permissions:
   beaconwar.use:

@@ -31,13 +31,15 @@ public class BeaconPlacer {
     private final boolean spawnCastles;
     private final boolean spawnCastleGates;
     private final boolean isNether;
+    private final boolean spawnNetherPortals;
     
-    public BeaconPlacer(Player player, BeaconManager beaconManager, int spacing, int beaconsPerSide, int groundSearchStartY, boolean spawnCastles, boolean spawnCastleGates, double netherSpacingMultiplier) {
+    public BeaconPlacer(Player player, BeaconManager beaconManager, int spacing, int beaconsPerSide, int groundSearchStartY, boolean spawnCastles, boolean spawnCastleGates, double netherSpacingMultiplier, boolean spawnNetherPortals) {
         this.player = player;
         this.beaconManager = beaconManager;
         this.beaconsPerSide = beaconsPerSide;
         this.spawnCastles = spawnCastles;
         this.spawnCastleGates = spawnCastleGates;
+        this.spawnNetherPortals = spawnNetherPortals;
         
         // Detect Nether environment
         this.isNether = player.getWorld().getEnvironment() == World.Environment.NETHER;
@@ -317,6 +319,55 @@ public class BeaconPlacer {
         if (spawnCastles) {
             CastleBuilder castle = new CastleBuilder(loc, spawnCastleGates);
             castle.build();
+        }
+        
+        // Build nether portal near beacon if in Nether and enabled
+        if (isNether && spawnNetherPortals) {
+            buildNetherPortal(loc);
+        }
+    }
+    
+    /**
+     * Build a nether portal structure near the beacon.
+     * Portal is placed 6 blocks away in the +Z direction, facing the beacon.
+     * Standard portal: 4 wide x 5 tall obsidian frame with 2x3 portal interior.
+     */
+    private void buildNetherPortal(Location beaconLoc) {
+        World world = beaconLoc.getWorld();
+        int baseX = beaconLoc.getBlockX();
+        int baseY = beaconLoc.getBlockY();
+        int baseZ = beaconLoc.getBlockZ() + 6; // 6 blocks away in +Z direction
+        
+        // Clear space for portal (5 tall, 4 wide in X direction)
+        for (int dx = -1; dx <= 2; dx++) {
+            for (int dy = 0; dy <= 4; dy++) {
+                world.getBlockAt(baseX + dx, baseY + dy, baseZ).setType(Material.AIR);
+            }
+        }
+        
+        // Build obsidian frame (4 wide x 5 tall)
+        // Bottom row
+        for (int dx = 0; dx <= 1; dx++) {
+            world.getBlockAt(baseX + dx, baseY, baseZ).setType(Material.OBSIDIAN);
+        }
+        // Top row
+        for (int dx = 0; dx <= 1; dx++) {
+            world.getBlockAt(baseX + dx, baseY + 4, baseZ).setType(Material.OBSIDIAN);
+        }
+        // Left column
+        for (int dy = 0; dy <= 4; dy++) {
+            world.getBlockAt(baseX - 1, baseY + dy, baseZ).setType(Material.OBSIDIAN);
+        }
+        // Right column
+        for (int dy = 0; dy <= 4; dy++) {
+            world.getBlockAt(baseX + 2, baseY + dy, baseZ).setType(Material.OBSIDIAN);
+        }
+        
+        // Fill interior with portal blocks (2 wide x 3 tall)
+        for (int dx = 0; dx <= 1; dx++) {
+            for (int dy = 1; dy <= 3; dy++) {
+                world.getBlockAt(baseX + dx, baseY + dy, baseZ).setType(Material.NETHER_PORTAL);
+            }
         }
     }
 }

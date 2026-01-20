@@ -2,8 +2,10 @@ package com.beaconwar.game;
 
 import java.time.Duration;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.stream.Collectors;
 
 import org.bukkit.Bukkit;
 import org.bukkit.Color;
@@ -37,12 +39,21 @@ public class GameManager {
     private SpawnManager spawnManager;
     private ScoreManager scoreManager;
     private TerritoryManager territoryManager;
+    private EloManager eloManager;
     
     private boolean gameActive = false;
     private boolean beaconsInitialized = false;
     
     private Team redTeam;
     private Team blueTeam;
+    
+    // Persistent team assignments (survive disconnects)
+    private final Map<String, TeamColor> playerTeamAssignment = new HashMap<>();
+    private final Map<String, Integer> playerAssignedResistance = new HashMap<>();
+    
+    // Game roster for ELO updates (snapshot at game start)
+    private List<EloManager.PlayerResistance> gameRedTeam = new ArrayList<>();
+    private List<EloManager.PlayerResistance> gameBlueTeam = new ArrayList<>();
     
     // Game phase tracking
     private GamePhase currentPhase = GamePhase.CAPTURING;
@@ -51,11 +62,19 @@ public class GameManager {
     private long lastAmmoSupplyTime = 0;
     private long lastStackCheckTime = 0;
     
+    // Game timer and pause tracking
+    private long gameStartTime = 0;
+    private long gameDurationMs = 0;  // 0 = no limit
+    private boolean gamePaused = false;
+    private long pauseStartTime = 0;
+    private long totalPausedTime = 0;
+    
     public GameManager(BeaconWarPlugin plugin) {
         this.plugin = plugin;
         setupTeams();
         setupScoreboard();
         scoreManager = new ScoreManager();
+        eloManager = new EloManager(plugin);
     }
     
     private void setupTeams() {
@@ -106,6 +125,7 @@ public class GameManager {
         boolean spawnCastles = plugin.getConfig().getBoolean("spawn-castles", true);
         boolean spawnCastleGates = plugin.getConfig().getBoolean("spawn-castle-gates", false);
         double netherSpacingMultiplier = plugin.getConfig().getDouble("nether-spacing-multiplier", 0.7);
+        boolean spawnNetherPortals = plugin.getConfig().getBoolean("spawn-nether-portals", true);
         
         // Calculate effective spacing (may be reduced in Nether)
         boolean isNether = player.getWorld().getEnvironment() == org.bukkit.World.Environment.NETHER;
@@ -114,7 +134,7 @@ public class GameManager {
         spawnManager = new SpawnManager(beaconManager, effectiveSpacing);
         territoryManager = new TerritoryManager(beaconManager, effectiveSpacing);
         
-        BeaconPlacer placer = new BeaconPlacer(player, beaconManager, spacing, beaconsPerSide, groundSearchStartY, spawnCastles, spawnCastleGates, netherSpacingMultiplier);
+        BeaconPlacer placer = new BeaconPlacer(player, beaconManager, spacing, beaconsPerSide, groundSearchStartY, spawnCastles, spawnCastleGates, netherSpacingMultiplier, spawnNetherPortals);
         boolean success = placer.placeAllBeacons();
         
         if (success) {
@@ -125,7 +145,11 @@ public class GameManager {
         return success;
     }
     
-    public void startGame() {
+    /**
+     * Start the game with optional time limit.
+     * @param minutes Game duration in minutes (0 = no limit)
+     */
+    public void startGame(int minutes) {
         if (!beaconsInitialized) {
             Bukkit.broadcast(Component.text("[Beacon War] ", NamedTextColor.RED)
                     .append(Component.text("Cannot start game: beacons not set up!", NamedTextColor.YELLOW)));
@@ -133,11 +157,26 @@ public class GameManager {
         }
         
         gameActive = true;
+        gamePaused = false;
+        totalPausedTime = 0;
         currentPhase = GamePhase.CAPTURING;
-        phaseStartTime = System.currentTimeMillis();
-        lastScoreTime = System.currentTimeMillis();
-        lastAmmoSupplyTime = System.currentTimeMillis();
+        
+        long now = System.currentTimeMillis();
+        gameStartTime = now;
+        phaseStartTime = now;
+        lastScoreTime = now;
+        lastAmmoSupplyTime = now;
+        gameDurationMs = minutes * 60 * 1000L;
+        
         scoreManager.reset();
+        
+        // Set all players to survival mode
+        for (Player player : Bukkit.getOnlinePlayers()) {
+            player.setGameMode(org.bukkit.GameMode.SURVIVAL);
+        }
+        
+        // Record game rosters for ELO updates (snapshot of current team assignments)
+        recordGameRosters();
         
         // Check if game is in the Nether and give portal supplies
         boolean isNether = beaconManager.getAllBeacons().iterator().next().getLocation().getWorld()
@@ -146,12 +185,41 @@ public class GameManager {
             supplyNetherPortalItems();
         }
         
+        String timeMsg = minutes > 0 ? " (" + minutes + " min)" : " (no time limit)";
         Bukkit.broadcast(Component.text("[Beacon War] ", NamedTextColor.AQUA)
-                .append(Component.text("Game started! ", NamedTextColor.GREEN))
+                .append(Component.text("Game started!" + timeMsg + " ", NamedTextColor.GREEN))
                 .append(Component.text("Phase: ", NamedTextColor.GRAY))
                 .append(Component.text(currentPhase.getDisplayName(), currentPhase.getColor())));
         
         announcePhase();
+    }
+    
+    /**
+     * Start game with no time limit.
+     */
+    public void startGame() {
+        startGame(0);
+    }
+    
+    /**
+     * Record the game rosters at game start for ELO updates.
+     */
+    private void recordGameRosters() {
+        gameRedTeam.clear();
+        gameBlueTeam.clear();
+        
+        for (Map.Entry<String, TeamColor> entry : playerTeamAssignment.entrySet()) {
+            String playerName = entry.getKey();
+            TeamColor team = entry.getValue();
+            int resistance = playerAssignedResistance.getOrDefault(playerName, 0);
+            
+            EloManager.PlayerResistance pr = new EloManager.PlayerResistance(playerName, resistance);
+            if (team == TeamColor.RED) {
+                gameRedTeam.add(pr);
+            } else if (team == TeamColor.BLUE) {
+                gameBlueTeam.add(pr);
+            }
+        }
     }
     
     /**
@@ -166,10 +234,177 @@ public class GameManager {
                 .append(Component.text("Nether game! All players received obsidian and flint-and-steel.", NamedTextColor.GOLD)));
     }
     
+    /**
+     * Stop the game without determining a winner (admin stop).
+     */
     public void stopGame() {
         gameActive = false;
+        gamePaused = false;
+        
+        // Clear team assignments for next game
+        playerTeamAssignment.clear();
+        playerAssignedResistance.clear();
+        gameRedTeam.clear();
+        gameBlueTeam.clear();
+        
         Bukkit.broadcast(Component.text("[Beacon War] ", NamedTextColor.AQUA)
                 .append(Component.text("Game stopped!", NamedTextColor.YELLOW)));
+    }
+    
+    /**
+     * Full reset - clears game state AND beacon positions.
+     * Does NOT affect ELO ratings.
+     */
+    public void resetGame() {
+        // Stop any active game
+        gameActive = false;
+        gamePaused = false;
+        
+        // Clear team assignments
+        playerTeamAssignment.clear();
+        playerAssignedResistance.clear();
+        gameRedTeam.clear();
+        gameBlueTeam.clear();
+        
+        // Clear beacon state
+        if (beaconManager != null) {
+            beaconManager.clear();
+        }
+        beaconsInitialized = false;
+        beaconManager = null;
+        spawnManager = null;
+        territoryManager = null;
+        
+        // Reset scores
+        scoreManager.reset();
+        
+        // Reset phase tracking
+        currentPhase = GamePhase.CAPTURING;
+        phaseStartTime = 0;
+        lastScoreTime = 0;
+        lastAmmoSupplyTime = 0;
+        lastStackCheckTime = 0;
+        gameStartTime = 0;
+        gameDurationMs = 0;
+        totalPausedTime = 0;
+        
+        // Reset all players to main scoreboard
+        for (Player player : Bukkit.getOnlinePlayers()) {
+            player.setScoreboard(Bukkit.getScoreboardManager().getMainScoreboard());
+        }
+        
+        Bukkit.broadcast(Component.text("[Beacon War] ", NamedTextColor.AQUA)
+                .append(Component.text("Game fully reset! Use /bw setup to place new beacons.", NamedTextColor.GREEN)));
+    }
+    
+    /**
+     * End the game with a winner, update ELO ratings.
+     * @param winner The winning team (NEUTRAL = tie)
+     */
+    public void endGame(TeamColor winner) {
+        gameActive = false;
+        gamePaused = false;
+        
+        // Announce winner
+        if (winner == TeamColor.NEUTRAL) {
+            Bukkit.broadcast(Component.text("[Beacon War] ", NamedTextColor.AQUA)
+                    .append(Component.text("Game ended in a TIE!", NamedTextColor.YELLOW)));
+        } else {
+            NamedTextColor winnerColor = (winner == TeamColor.RED) ? NamedTextColor.RED : NamedTextColor.BLUE;
+            String winnerName = (winner == TeamColor.RED) ? "RED TEAM" : "BLUE TEAM";
+            
+            // Show title to all players
+            for (Player player : Bukkit.getOnlinePlayers()) {
+                player.showTitle(Title.title(
+                        Component.text(winnerName + " WINS!", winnerColor),
+                        Component.text(""),
+                        Title.Times.times(Duration.ofMillis(500), Duration.ofSeconds(5), Duration.ofMillis(1000))));
+            }
+            
+            Bukkit.broadcast(Component.text("[Beacon War] ", NamedTextColor.AQUA)
+                    .append(Component.text(winnerName + " WINS!", winnerColor)));
+        }
+        
+        // Update ELO ratings (only if not a tie and we have rosters)
+        if (winner != TeamColor.NEUTRAL && !gameRedTeam.isEmpty() && !gameBlueTeam.isEmpty()) {
+            double loss = eloManager.updateRatings(gameRedTeam, gameBlueTeam, winner);
+            Bukkit.broadcast(Component.text("[Beacon War ELO] ", NamedTextColor.GOLD)
+                    .append(Component.text("Ratings updated! Loss: " + String.format("%.3f", loss), NamedTextColor.YELLOW)));
+        }
+        
+        // Show final results (scores only in score mode, beacons in beacon_count mode)
+        String winCondition = plugin.getConfig().getString("win-condition", "score");
+        if (winCondition.equalsIgnoreCase("score")) {
+            Bukkit.broadcast(Component.text("[Beacon War] ", NamedTextColor.AQUA)
+                    .append(Component.text("Final Scores - Red: " + scoreManager.getScore(TeamColor.RED) + 
+                            " | Blue: " + scoreManager.getScore(TeamColor.BLUE), NamedTextColor.WHITE)));
+        } else {
+            Map<TeamColor, Integer> counts = beaconManager.getTeamCounts();
+            Bukkit.broadcast(Component.text("[Beacon War] ", NamedTextColor.AQUA)
+                    .append(Component.text("Final Beacons - Red: " + counts.get(TeamColor.RED) + 
+                            " | Blue: " + counts.get(TeamColor.BLUE), NamedTextColor.WHITE)));
+        }
+    }
+    
+    /**
+     * Determine the winner based on current state and win condition mode.
+     */
+    public TeamColor determineWinner() {
+        Map<TeamColor, Integer> counts = beaconManager.getTeamCounts();
+        int redBeacons = counts.get(TeamColor.RED);
+        int blueBeacons = counts.get(TeamColor.BLUE);
+        int totalBeacons = redBeacons + blueBeacons + counts.get(TeamColor.NEUTRAL);
+        
+        // If one team has ALL beacons, they win immediately
+        if (redBeacons == totalBeacons) return TeamColor.RED;
+        if (blueBeacons == totalBeacons) return TeamColor.BLUE;
+        
+        // Determine winner by config mode
+        String winCondition = plugin.getConfig().getString("win-condition", "score");
+        
+        if (winCondition.equalsIgnoreCase("beacon_count")) {
+            if (redBeacons > blueBeacons) return TeamColor.RED;
+            if (blueBeacons > redBeacons) return TeamColor.BLUE;
+            return TeamColor.NEUTRAL;  // Tie
+        } else {
+            // Default: score mode
+            int redScore = scoreManager.getScore(TeamColor.RED);
+            int blueScore = scoreManager.getScore(TeamColor.BLUE);
+            if (redScore > blueScore) return TeamColor.RED;
+            if (blueScore > redScore) return TeamColor.BLUE;
+            return TeamColor.NEUTRAL;  // Tie
+        }
+    }
+    
+    /**
+     * Pause the game (stops all timers).
+     */
+    public void pauseGame() {
+        if (!gameActive || gamePaused) return;
+        
+        gamePaused = true;
+        pauseStartTime = System.currentTimeMillis();
+        
+        Bukkit.broadcast(Component.text("[Beacon War] ", NamedTextColor.AQUA)
+                .append(Component.text("Game PAUSED!", NamedTextColor.YELLOW)));
+    }
+    
+    /**
+     * Unpause the game (resumes all timers).
+     */
+    public void unpauseGame() {
+        if (!gameActive || !gamePaused) return;
+        
+        long pauseDuration = System.currentTimeMillis() - pauseStartTime;
+        totalPausedTime += pauseDuration;
+        gamePaused = false;
+        
+        Bukkit.broadcast(Component.text("[Beacon War] ", NamedTextColor.AQUA)
+                .append(Component.text("Game RESUMED!", NamedTextColor.GREEN)));
+    }
+    
+    public boolean isGamePaused() {
+        return gamePaused;
     }
     
     /**
@@ -180,26 +415,47 @@ public class GameManager {
             return;
         }
         
+        // Always update beacon ownership even when paused (so we can detect all-beacon capture)
+        beaconManager.updateAllBeaconOwnership();
+        
+        // Check for victory conditions (even when paused for all-beacon capture)
+        if (gameActive) {
+            checkVictoryConditions();
+        }
+        
+        // Skip timer-based updates when paused
+        if (gamePaused) {
+            updateActionBar();  // Still show action bar (with PAUSED indicator)
+            updateScoreboard();
+            return;
+        }
+        
         long currentTime = System.currentTimeMillis();
+        long effectivePhaseStart = phaseStartTime + totalPausedTime;
+        long effectiveScoreStart = lastScoreTime + totalPausedTime;
+        long effectiveAmmoStart = lastAmmoSupplyTime + totalPausedTime;
+        
         int phaseDuration = plugin.getConfig().getInt("phase-duration", 600) * 1000;
         int scoreInterval = plugin.getConfig().getInt("score-interval", 60) * 1000;
-        int ammoInterval = 4 * 60 * 1000; // 1 minute
+        int ammoInterval = 4 * 60 * 1000; // 4 minutes
         
         // Check for phase change
-        if (currentTime - phaseStartTime >= phaseDuration) {
+        if (currentTime - effectivePhaseStart >= phaseDuration) {
             switchPhase();
+            // Reset phase start time relative to now (not including paused time)
+            phaseStartTime = currentTime - totalPausedTime;
         }
         
         // Check for score update
-        if (currentTime - lastScoreTime >= scoreInterval) {
+        if (currentTime - effectiveScoreStart >= scoreInterval) {
             awardScore();
-            lastScoreTime = currentTime;
+            lastScoreTime = currentTime - totalPausedTime;
         }
         
         // Check for ammo supply
-        if (currentTime - lastAmmoSupplyTime >= ammoInterval) {
+        if (currentTime - effectiveAmmoStart >= ammoInterval) {
             supplyAmmo();
-            lastAmmoSupplyTime = currentTime;
+            lastAmmoSupplyTime = currentTime - totalPausedTime;
         }
         
         // Check for wool/glass slot limits every 2 seconds
@@ -207,10 +463,6 @@ public class GameManager {
             enforceSlotLimits();
             lastStackCheckTime = currentTime;
         }
-        
-        // Always update beacon ownership from glass blocks
-        // The validator will reject changes during mining period
-        beaconManager.updateAllBeaconOwnership();
         
         // Apply mining fatigue near enemy beacons
         applyMiningFatigue();
@@ -231,17 +483,62 @@ public class GameManager {
         updateScoreboard();
     }
     
+    /**
+     * Check for victory conditions and end game if met.
+     */
+    private void checkVictoryConditions() {
+        Map<TeamColor, Integer> counts = beaconManager.getTeamCounts();
+        int redBeacons = counts.get(TeamColor.RED);
+        int blueBeacons = counts.get(TeamColor.BLUE);
+        int totalBeacons = redBeacons + blueBeacons + counts.get(TeamColor.NEUTRAL);
+        
+        // Check for all-beacon capture (immediate win)
+        if (redBeacons == totalBeacons && totalBeacons > 0) {
+            endGame(TeamColor.RED);
+            return;
+        }
+        if (blueBeacons == totalBeacons && totalBeacons > 0) {
+            endGame(TeamColor.BLUE);
+            return;
+        }
+        
+        // Check for time expiry (if time limit is set)
+        if (gameDurationMs > 0 && !gamePaused) {
+            long elapsed = System.currentTimeMillis() - gameStartTime - totalPausedTime;
+            if (elapsed >= gameDurationMs) {
+                TeamColor winner = determineWinner();
+                endGame(winner);
+            }
+        }
+    }
+    
     private void updateActionBar() {
         long currentTime = System.currentTimeMillis();
         int phaseDuration = plugin.getConfig().getInt("phase-duration", 600) * 1000;
-        long timeLeft = (phaseStartTime + phaseDuration - currentTime) / 1000;
+        long effectivePhaseStart = phaseStartTime + totalPausedTime;
+        long phaseTimeLeft = Math.max(0, (effectivePhaseStart + phaseDuration - currentTime) / 1000);
+        
+        // Calculate game time remaining (if time limit set)
+        String gameTimeStr = "";
+        if (gameDurationMs > 0) {
+            long effectiveGameStart = gameStartTime + totalPausedTime;
+            long gameTimeLeft = Math.max(0, (effectiveGameStart + gameDurationMs - currentTime) / 1000);
+            gameTimeStr = " | Game: " + formatTime(gameTimeLeft);
+        }
         
         for (Player player : Bukkit.getOnlinePlayers()) {
             TeamColor playerTeam = getPlayerTeam(player);
             
             // Base action bar with phase timer
-            Component actionBar = Component.text(currentPhase.getDisplayName() + " - ", currentPhase.getColor())
-                    .append(Component.text(formatTime(timeLeft), NamedTextColor.WHITE));
+            Component actionBar;
+            if (gamePaused) {
+                actionBar = Component.text("PAUSED", NamedTextColor.RED)
+                        .append(Component.text(" - " + currentPhase.getDisplayName() + " - ", currentPhase.getColor()))
+                        .append(Component.text(formatTime(phaseTimeLeft) + gameTimeStr, NamedTextColor.WHITE));
+            } else {
+                actionBar = Component.text(currentPhase.getDisplayName() + " - ", currentPhase.getColor())
+                        .append(Component.text(formatTime(phaseTimeLeft) + gameTimeStr, NamedTextColor.WHITE));
+            }
             
             // Add target beacon coordinates (neutral first, then enemy front)
             if (playerTeam != TeamColor.NEUTRAL && beaconManager != null) {
@@ -319,36 +616,84 @@ public class GameManager {
         // Display format (reverse order because Minecraft displays bottom-up)
         int line = 15;
         
+        // Check if win condition is "score" mode
+        boolean isScoreMode = plugin.getConfig().getString("win-condition", "score").equalsIgnoreCase("score");
+        
         objective.getScore("§e§l" + currentPhase.getDisplayName()).setScore(line--);
         objective.getScore("").setScore(line--);
         
         objective.getScore("§c§lRed Team:").setScore(line--);
-        objective.getScore("  Score: §f" + scoreManager.getScore(TeamColor.RED)).setScore(line--);
+        if (isScoreMode) {
+            objective.getScore("  Score: §f" + scoreManager.getScore(TeamColor.RED)).setScore(line--);
+        }
         objective.getScore("  Beacons: §f" + counts.get(TeamColor.RED)).setScore(line--);
         objective.getScore(" ").setScore(line--);
         
         objective.getScore("§9§lBlue Team:").setScore(line--);
-        objective.getScore("  Score: §f" + scoreManager.getScore(TeamColor.BLUE)).setScore(line--);
+        if (isScoreMode) {
+            objective.getScore("  Score: §f" + scoreManager.getScore(TeamColor.BLUE)).setScore(line--);
+        }
         objective.getScore("  Beacons: §f" + counts.get(TeamColor.BLUE)).setScore(line--);
         objective.getScore("  ").setScore(line--);
         
-        // Add THIS player's territory info only
+        // Add THIS player's status info
         TeamColor playerTeam = getPlayerTeam(player);
         if (playerTeam != TeamColor.NEUTRAL) {
-            TeamColor territory = territoryManager.getTerritoryAt(player.getLocation());
-            boolean hasKeepInv = isInHomeTerritory(player) && currentPhase == GamePhase.CAPTURING;
+            objective.getScore("§7Drop Status:").setScore(line--);
             
-            String territoryText = switch (territory) {
-                case RED -> "§cRed";
-                case BLUE -> "§9Blue";
-                default -> "§7Neutral";
-            };
+            // Check if player is in a different dimension than the beacons
+            org.bukkit.World beaconWorld = beaconManager.getBeacon(0).getLocation().getWorld();
+            boolean inDifferentDimension = !player.getWorld().equals(beaconWorld);
             
-            String keepInvText = hasKeepInv ? "§a✓" : "§7✗";
-            
-            objective.getScore("§7Your Status:").setScore(line--);
-            objective.getScore("  Territory: " + territoryText).setScore(line--);
-            objective.getScore("  KeepInv: " + keepInvText).setScore(line--);
+            if (inDifferentDimension) {
+                // Player is in a different dimension - they always keep inventory
+                objective.getScore("  KeepInv: §a✓ §7(other dim)").setScore(line--);
+            } else {
+                String dropMode = plugin.getConfig().getString("drop-mode", "territory");
+                
+                if (dropMode.equalsIgnoreCase("absolute_position")) {
+                    // Absolute position mode: show beacon index and drop percentage
+                    double beaconIndex = beaconManager.getInterpolatedBeaconIndex(player.getLocation().getX());
+                    
+                    // Calculate enemy distance (positive = in enemy territory)
+                    double enemyDistance;
+                    if (playerTeam == TeamColor.BLUE) {
+                        enemyDistance = beaconIndex;  // Blue: positive = enemy
+                    } else {
+                        enemyDistance = -beaconIndex;  // Red: negative = enemy
+                    }
+                    
+                    // Calculate drop probability
+                    double progressiveFraction = plugin.getConfig().getDouble("progressive-drop-fraction", 0.04);
+                    double dropProb = enemyDistance <= 0 ? 0.0 : Math.min(1.0, enemyDistance * progressiveFraction);
+                    
+                    // Format position with color (green = safe, red = danger)
+                    String posColor = enemyDistance <= 0 ? "§a" : "§c";
+                    String posText = String.format("%+.1f", beaconIndex);
+                    
+                    // Format drop probability
+                    String dropText = String.format("%.0f%%", dropProb * 100);
+                    String dropColor = dropProb == 0 ? "§a" : (dropProb < 0.2 ? "§e" : "§c");
+                    
+                    objective.getScore("  Position: " + posColor + posText).setScore(line--);
+                    objective.getScore("  Drop: " + dropColor + dropText).setScore(line--);
+                } else {
+                    // Territory mode: show territory and keep inventory status
+                    TeamColor territory = territoryManager.getTerritoryAt(player.getLocation());
+                    boolean hasKeepInv = isInHomeTerritory(player) && currentPhase == GamePhase.CAPTURING;
+                    
+                    String territoryText = switch (territory) {
+                        case RED -> "§cRed";
+                        case BLUE -> "§9Blue";
+                        default -> "§7Neutral";
+                    };
+                    
+                    String keepInvText = hasKeepInv ? "§a✓" : "§7✗";
+                    
+                    objective.getScore("  Territory: " + territoryText).setScore(line--);
+                    objective.getScore("  KeepInv: " + keepInvText).setScore(line--);
+                }
+            }
         }
     }
     
@@ -460,8 +805,8 @@ public class GameManager {
         int redBeacons = counts.get(TeamColor.RED);
         int blueBeacons = counts.get(TeamColor.BLUE);
         
-        // Load resistance levels from config (index = beacon count, value = resistance level)
-        List<Integer> resistanceLevels = plugin.getConfig().getIntegerList("comeback-resistance-levels");
+        // Load comeback resistance levels from config (index = beacon count, value = resistance level)
+        List<Integer> comebackResistanceLevels = plugin.getConfig().getIntegerList("comeback-resistance-levels");
         
         for (Player player : Bukkit.getOnlinePlayers()) {
             TeamColor playerTeam = getPlayerTeam(player);
@@ -470,12 +815,18 @@ public class GameManager {
             }
             
             int teamBeacons = (playerTeam == TeamColor.RED) ? redBeacons : blueBeacons;
-            int resistanceLevel = 0;
+            int comebackResistance = 0;
             
-            // Look up resistance level from config array
-            if (teamBeacons < resistanceLevels.size()) {
-                resistanceLevel = resistanceLevels.get(teamBeacons);
+            // Look up comeback resistance level from config array
+            if (teamBeacons < comebackResistanceLevels.size()) {
+                comebackResistance = comebackResistanceLevels.get(teamBeacons);
             }
+            
+            // Get player's assigned resistance (for team balancing)
+            int assignedResistance = playerAssignedResistance.getOrDefault(player.getName(), 0);
+            
+            // Use the higher of comeback resistance or assigned resistance
+            int resistanceLevel = Math.max(comebackResistance, assignedResistance);
             
             // Apply resistance if applicable
             if (resistanceLevel > 0) {
@@ -677,26 +1028,90 @@ public class GameManager {
         }
     }
     
+    /**
+     * Add a player to a team.
+     */
     public void addPlayerToTeam(Player player, TeamColor team) {
+        addPlayerToTeam(player.getName(), team);
+        
+        // Send confirmation message
+        switch (team) {
+            case RED -> player.sendMessage(Component.text("[Beacon War] ", NamedTextColor.AQUA)
+                        .append(Component.text("You joined the Red Team!", NamedTextColor.RED)));
+            case BLUE -> player.sendMessage(Component.text("[Beacon War] ", NamedTextColor.AQUA)
+                        .append(Component.text("You joined the Blue Team!", NamedTextColor.BLUE)));
+            default -> player.sendMessage(Component.text("[Beacon War] ", NamedTextColor.RED)
+                    .append(Component.text("Invalid team!", NamedTextColor.YELLOW)));
+        }
+    }
+    
+    /**
+     * Add a player to a team by name (for offline player support).
+     */
+    public void addPlayerToTeam(String playerName, TeamColor team) {
         // Remove from other teams first
-        redTeam.removeEntry(player.getName());
-        blueTeam.removeEntry(player.getName());
+        redTeam.removeEntry(playerName);
+        blueTeam.removeEntry(playerName);
+        playerTeamAssignment.remove(playerName);
         
         // Add to selected team
         switch (team) {
             case RED -> {
-                redTeam.addEntry(player.getName());
-                player.sendMessage(Component.text("[Beacon War] ", NamedTextColor.AQUA)
-                        .append(Component.text("You joined the Red Team!", NamedTextColor.RED)));
+                redTeam.addEntry(playerName);
+                playerTeamAssignment.put(playerName, TeamColor.RED);
             }
             case BLUE -> {
-                blueTeam.addEntry(player.getName());
-                player.sendMessage(Component.text("[Beacon War] ", NamedTextColor.AQUA)
-                        .append(Component.text("You joined the Blue Team!", NamedTextColor.BLUE)));
+                blueTeam.addEntry(playerName);
+                playerTeamAssignment.put(playerName, TeamColor.BLUE);
             }
-            default -> player.sendMessage(Component.text("[Beacon War] ", NamedTextColor.RED)
-                    .append(Component.text("Invalid team!", NamedTextColor.YELLOW)));
+            default -> {}
         }
+    }
+    
+    /**
+     * Set a player's assigned resistance level.
+     * @param playerName The player's name
+     * @param level Resistance level (0-4)
+     */
+    public void setAssignedResistance(String playerName, int level) {
+        level = Math.max(0, Math.min(4, level));  // Clamp to 0-4
+        playerAssignedResistance.put(playerName, level);
+    }
+    
+    /**
+     * Get a player's assigned resistance level.
+     */
+    public int getAssignedResistance(String playerName) {
+        return playerAssignedResistance.getOrDefault(playerName, 0);
+    }
+    
+    /**
+     * Restore a player's team and resistance when they reconnect.
+     */
+    public void restorePlayerState(Player player) {
+        String name = player.getName();
+        
+        // Restore team assignment
+        TeamColor team = playerTeamAssignment.get(name);
+        if (team != null) {
+            switch (team) {
+                case RED -> redTeam.addEntry(name);
+                case BLUE -> blueTeam.addEntry(name);
+                default -> {}
+            }
+            
+            player.sendMessage(Component.text("[Beacon War] ", NamedTextColor.AQUA)
+                    .append(Component.text("Welcome back! You're on the ", NamedTextColor.GREEN))
+                    .append(Component.text(team == TeamColor.RED ? "Red" : "Blue", team.getChatColor()))
+                    .append(Component.text(" team.", NamedTextColor.GREEN)));
+        }
+    }
+    
+    /**
+     * Get the persistent team assignment for a player.
+     */
+    public TeamColor getPlayerTeamAssignment(String playerName) {
+        return playerTeamAssignment.getOrDefault(playerName, TeamColor.NEUTRAL);
     }
     
     public TeamColor getPlayerTeam(Player player) {
@@ -739,10 +1154,13 @@ public class GameManager {
         player.sendMessage(Component.text("Neutral Beacons: ", NamedTextColor.YELLOW)
                 .append(Component.text(String.valueOf(counts.get(TeamColor.NEUTRAL)), NamedTextColor.WHITE)));
         
-        player.sendMessage(Component.text("Red Score: ", NamedTextColor.RED)
-                .append(Component.text(String.valueOf(scoreManager.getScore(TeamColor.RED)), NamedTextColor.WHITE)));
-        player.sendMessage(Component.text("Blue Score: ", NamedTextColor.BLUE)
-                .append(Component.text(String.valueOf(scoreManager.getScore(TeamColor.BLUE)), NamedTextColor.WHITE)));
+        // Only show scores in score mode
+        if (plugin.getConfig().getString("win-condition", "score").equalsIgnoreCase("score")) {
+            player.sendMessage(Component.text("Red Score: ", NamedTextColor.RED)
+                    .append(Component.text(String.valueOf(scoreManager.getScore(TeamColor.RED)), NamedTextColor.WHITE)));
+            player.sendMessage(Component.text("Blue Score: ", NamedTextColor.BLUE)
+                    .append(Component.text(String.valueOf(scoreManager.getScore(TeamColor.BLUE)), NamedTextColor.WHITE)));
+        }
     }
     
     private String formatTime(long seconds) {
@@ -789,6 +1207,34 @@ public class GameManager {
     
     public TerritoryManager getTerritoryManager() {
         return territoryManager;
+    }
+    
+    public EloManager getEloManager() {
+        return eloManager;
+    }
+    
+    public long getGameTimeRemainingMs() {
+        if (gameDurationMs <= 0) return -1;  // No time limit
+        long elapsed = System.currentTimeMillis() - gameStartTime - totalPausedTime;
+        return Math.max(0, gameDurationMs - elapsed);
+    }
+    
+    public Team getRedTeam() {
+        return redTeam;
+    }
+    
+    public Team getBlueTeam() {
+        return blueTeam;
+    }
+    
+    /**
+     * Get list of players on a team.
+     */
+    public List<String> getTeamPlayers(TeamColor team) {
+        return playerTeamAssignment.entrySet().stream()
+                .filter(e -> e.getValue() == team)
+                .map(Map.Entry::getKey)
+                .collect(Collectors.toList());
     }
     
     /**

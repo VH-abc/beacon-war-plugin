@@ -8,7 +8,7 @@ beacon-spacing: 200
 # Nether spacing multiplier (applied to beacon-spacing when in Nether)
 # Default: 0.7 (e.g., 200 * 0.7 = 140 blocks in Nether)
 # The Nether is more compact, so smaller spacing works better
-nether-spacing-multiplier: 0.5
+nether-spacing-multiplier: 0.4
 
 # Number of beacons on each side (total = 2*beacons-per-side + 1)
 # Default: 5 (creates beacons -5 to 5, total 11 beacons)
@@ -17,6 +17,13 @@ beacons-per-side: 5
 # Starting Y level for ground search when placing beacons
 # Default: 150
 ground-search-start-y: 150
+
+# Win Condition Settings
+# Win condition mode: "score" or "beacon_count"
+# - score: Team with higher score wins when time expires
+# - beacon_count: Team with more beacons wins when time expires
+# Note: If a team captures ALL beacons, they win immediately regardless of mode
+win-condition: beacon_count
 
 # Game Phase Settings
 # Duration of each phase in seconds (default: 600 = 10 minutes)
@@ -66,4 +73,9 @@ beacon-protection-radius: 5
 spawn-castles: true
 # Whether castle walls should have gate entrances (default: false)
 spawn-castle-gates: false
+
+# Nether Portal Generation
+# Whether to spawn nether portals near beacons in Nether games (default: true)
+# Portals are placed a few blocks away from each beacon
+spawn-nether-portals: true
 
