@@ -63,6 +63,7 @@ public class BeaconWarCommand implements CommandExecutor, TabCompleter {
                 case "resistance" -> handleResistance(player, gameManager, shiftedArgs);
                 case "elo" -> handleElo(player, gameManager, shiftedArgs);
                 case "quicklaunch" -> handleQuicklaunch(player, gameManager, shiftedArgs);
+                case "balancedteams" -> handleBalancedTeams(player, gameManager);
                 case "status" -> gameManager.showStatus(player);
             }
             return true;
@@ -86,6 +87,7 @@ public class BeaconWarCommand implements CommandExecutor, TabCompleter {
             case "resistance" -> handleResistance(player, gameManager, args);
             case "elo" -> handleElo(player, gameManager, args);
             case "quicklaunch" -> handleQuicklaunch(player, gameManager, args);
+            case "balancedteams" -> handleBalancedTeams(player, gameManager);
             case "status" -> gameManager.showStatus(player);
             case "help" -> showHelp(player);
             default -> player.sendMessage(Component.text("[Beacon War] ", NamedTextColor.RED)
@@ -444,6 +446,33 @@ public class BeaconWarCommand implements CommandExecutor, TabCompleter {
                 .collect(Collectors.joining(", "));
     }
     
+    private void handleBalancedTeams(Player player, GameManager gameManager) {
+        List<Player> onlinePlayers = new ArrayList<>(Bukkit.getOnlinePlayers());
+        List<String> playerNames = onlinePlayers.stream()
+                .map(Player::getName)
+                .collect(Collectors.toList());
+        
+        if (playerNames.size() < 2) {
+            player.sendMessage(Component.text("[Beacon War] ", NamedTextColor.RED)
+                    .append(Component.text("Need at least 2 players!", NamedTextColor.YELLOW)));
+            return;
+        }
+        
+        // Calculate balanced teams using ELO
+        EloManager.BalancedMatch match = gameManager.getEloManager().findBalancedMatch(playerNames);
+        
+        // Display the results
+        player.sendMessage(Component.text("=== Balanced Teams Preview ===", NamedTextColor.AQUA));
+        player.sendMessage(Component.text("  RED: ", NamedTextColor.RED)
+                .append(Component.text(formatTeam(match.redTeam), NamedTextColor.WHITE)));
+        player.sendMessage(Component.text("  BLUE: ", NamedTextColor.BLUE)
+                .append(Component.text(formatTeam(match.blueTeam), NamedTextColor.WHITE)));
+        player.sendMessage(Component.text("  Predicted win: ", NamedTextColor.GRAY)
+                .append(Component.text("Red " + String.format("%.1f%%", match.pRedWins * 100), NamedTextColor.RED))
+                .append(Component.text(" | ", NamedTextColor.GRAY))
+                .append(Component.text("Blue " + String.format("%.1f%%", (1 - match.pRedWins) * 100), NamedTextColor.BLUE)));
+    }
+    
     private void showHelp(Player player) {
         player.sendMessage(Component.text("=== Beacon War Commands ===", NamedTextColor.AQUA));
         player.sendMessage(Component.text("All commands work with or without /bw prefix", NamedTextColor.GRAY));
@@ -469,6 +498,8 @@ public class BeaconWarCommand implements CommandExecutor, TabCompleter {
                 .append(Component.text(" - View ratings", NamedTextColor.GRAY)));
         player.sendMessage(Component.text("/quicklaunch [manual] [minutes]", NamedTextColor.YELLOW)
                 .append(Component.text(" - Auto setup, balance, countdown, start", NamedTextColor.GRAY)));
+        player.sendMessage(Component.text("/balanced_teams", NamedTextColor.YELLOW)
+                .append(Component.text(" - Preview balanced team assignments", NamedTextColor.GRAY)));
         player.sendMessage(Component.text("/status", NamedTextColor.YELLOW)
                 .append(Component.text(" - Show game status", NamedTextColor.GRAY)));
     }
@@ -485,7 +516,7 @@ public class BeaconWarCommand implements CommandExecutor, TabCompleter {
         // Handle /bw subcommands
         if (args.length == 1) {
             return Arrays.asList("setup", "start", "stop", "reset", "end", "pause", "unpause", 
-                    "join", "resistance", "elo", "quicklaunch", "status", "help");
+                    "join", "resistance", "elo", "quicklaunch", "balanced_teams", "status", "help");
         }
         
         return getTabCompletionsForCommand(args[0].toLowerCase(), Arrays.copyOfRange(args, 1, args.length));

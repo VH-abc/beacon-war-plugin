@@ -1,5 +1,7 @@
 package com.beaconwar;
 
+import org.bukkit.plugin.java.JavaPlugin;
+
 import com.beaconwar.commands.BeaconWarCommand;
 import com.beaconwar.commands.NetherCommand;
 import com.beaconwar.commands.OverworldCommand;
@@ -7,7 +9,6 @@ import com.beaconwar.game.GameManager;
 import com.beaconwar.listeners.BeaconChangeListener;
 import com.beaconwar.listeners.DeathListener;
 import com.beaconwar.listeners.PlayerConnectionListener;
-import org.bukkit.plugin.java.JavaPlugin;
 
 public class BeaconWarPlugin extends JavaPlugin {
     
@@ -29,7 +30,7 @@ public class BeaconWarPlugin extends JavaPlugin {
         
         // Register direct commands (without /bw prefix)
         String[] directCommands = {"setup", "start", "stop", "reset", "end", "pause", "unpause", 
-                                   "join", "resistance", "elo", "quicklaunch", "status"};
+                                   "join", "resistance", "elo", "quicklaunch", "balanced_teams", "status"};
         for (String cmd : directCommands) {
             getCommand(cmd).setExecutor(bwCommand);
             getCommand(cmd).setTabCompleter(bwCommand);

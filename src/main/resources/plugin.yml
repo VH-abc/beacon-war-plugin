@@ -64,6 +64,11 @@ commands:
     aliases: [ql]
     usage: /<command> [manual] [minutes]
     permission: beaconwar.admin
+  balanced_teams:
+    description: Preview balanced team assignments
+    aliases: [balancedteams]
+    usage: /<command>
+    permission: beaconwar.use
   status:
     description: Show game status
     usage: /<command>

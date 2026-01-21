@@ -433,19 +433,19 @@ public class GameManager {
             return;
         }
         
-        // Skip most updates when paused (only update display)
+        // Always update beacon ownership even when paused (so we can detect all-beacon capture)
+        beaconManager.updateAllBeaconOwnership();
+        
+        // Check for victory conditions (even when paused for all-beacon capture)
+        if (gameActive) {
+            checkVictoryConditions();
+        }
+        
+        // Skip timer-based updates when paused
         if (gamePaused) {
             updateActionBar();  // Still show action bar (with PAUSED indicator)
             updateScoreboard();
             return;
-        }
-        
-        // Update beacon ownership (only when not paused)
-        beaconManager.updateAllBeaconOwnership();
-        
-        // Check for victory conditions
-        if (gameActive) {
-            checkVictoryConditions();
         }
         
         long currentTime = System.currentTimeMillis();
@@ -533,38 +533,29 @@ public class GameManager {
     private void updateActionBar() {
         long currentTime = System.currentTimeMillis();
         int phaseDuration = plugin.getConfig().getInt("phase-duration", 600) * 1000;
-        
-        // Account for current pause time (if paused) in addition to completed pauses
-        long effectivePausedTime = totalPausedTime;
-        if (gamePaused) {
-            effectivePausedTime += (currentTime - pauseStartTime);
-        }
-        
-        long effectivePhaseStart = phaseStartTime + effectivePausedTime;
+        long effectivePhaseStart = phaseStartTime + totalPausedTime;
         long phaseTimeLeft = Math.max(0, (effectivePhaseStart + phaseDuration - currentTime) / 1000);
         
         // Calculate game time remaining (if time limit set)
         String gameTimeStr = "";
         if (gameDurationMs > 0) {
-            long effectiveGameStart = gameStartTime + effectivePausedTime;
+            long effectiveGameStart = gameStartTime + totalPausedTime;
             long gameTimeLeft = Math.max(0, (effectiveGameStart + gameDurationMs - currentTime) / 1000);
-            gameTimeStr = formatTime(gameTimeLeft) + " | ";
+            gameTimeStr = " | Game: " + formatTime(gameTimeLeft);
         }
         
         for (Player player : Bukkit.getOnlinePlayers()) {
             TeamColor playerTeam = getPlayerTeam(player);
             
-            // Base action bar: [Game Time] | [Phase Name] - [Phase Time]
+            // Base action bar with phase timer
             Component actionBar;
             if (gamePaused) {
                 actionBar = Component.text("PAUSED", NamedTextColor.RED)
-                        .append(Component.text(" - " + gameTimeStr, NamedTextColor.WHITE))
-                        .append(Component.text(currentPhase.getDisplayName(), currentPhase.getColor()))
-                        .append(Component.text(" - " + formatTime(phaseTimeLeft), NamedTextColor.WHITE));
+                        .append(Component.text(" - " + currentPhase.getDisplayName() + " - ", currentPhase.getColor()))
+                        .append(Component.text(formatTime(phaseTimeLeft) + gameTimeStr, NamedTextColor.WHITE));
             } else {
-                actionBar = Component.text(gameTimeStr, NamedTextColor.WHITE)
-                        .append(Component.text(currentPhase.getDisplayName(), currentPhase.getColor()))
-                        .append(Component.text(" - " + formatTime(phaseTimeLeft), NamedTextColor.WHITE));
+                actionBar = Component.text(currentPhase.getDisplayName() + " - ", currentPhase.getColor())
+                        .append(Component.text(formatTime(phaseTimeLeft) + gameTimeStr, NamedTextColor.WHITE));
             }
             
             // Add target beacon coordinates (neutral first, then enemy front)
@@ -924,7 +915,7 @@ public class GameManager {
                 player.getInventory().addItem(pickaxe);
             }
             
-            // Supply Infinity, Power II, Punch I bow
+            // Supply Infinity, Power I, Punch I bow
             if (!hasBow(player.getInventory())) {
                 ItemStack bow = new ItemStack(Material.BOW);
                 Enchantment infinity = Enchantment.getByKey(NamespacedKey.minecraft("infinity"));
