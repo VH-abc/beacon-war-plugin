@@ -1,10 +1,18 @@
 package com.beaconwar.game;
 
+import java.io.File;
+import java.io.FileWriter;
+import java.io.IOException;
+import java.io.PrintWriter;
 import java.time.Duration;
+import java.time.LocalDateTime;
+import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.stream.Collectors;
 
 import org.bukkit.Bukkit;
@@ -51,9 +59,9 @@ public class GameManager {
     private final Map<String, TeamColor> playerTeamAssignment = new HashMap<>();
     private final Map<String, Integer> playerAssignedResistance = new HashMap<>();
     
-    // Game roster for ELO updates (snapshot at game start)
-    private List<EloManager.PlayerResistance> gameRedTeam = new ArrayList<>();
-    private List<EloManager.PlayerResistance> gameBlueTeam = new ArrayList<>();
+    // Game roster for ELO updates (accumulated during game)
+    private Set<String> gameRedTeam = new HashSet<>();
+    private Set<String> gameBlueTeam = new HashSet<>();
     
     // Game phase tracking
     private GamePhase currentPhase = GamePhase.CAPTURING;
@@ -175,9 +183,6 @@ public class GameManager {
             player.setGameMode(org.bukkit.GameMode.SURVIVAL);
         }
         
-        // Record game rosters for ELO updates (snapshot of current team assignments)
-        recordGameRosters();
-        
         // Check if game is in the Nether and give portal supplies
         boolean isNether = beaconManager.getAllBeacons().iterator().next().getLocation().getWorld()
                 .getEnvironment() == org.bukkit.World.Environment.NETHER;
@@ -202,27 +207,6 @@ public class GameManager {
     }
     
     /**
-     * Record the game rosters at game start for ELO updates.
-     */
-    private void recordGameRosters() {
-        gameRedTeam.clear();
-        gameBlueTeam.clear();
-        
-        for (Map.Entry<String, TeamColor> entry : playerTeamAssignment.entrySet()) {
-            String playerName = entry.getKey();
-            TeamColor team = entry.getValue();
-            int resistance = playerAssignedResistance.getOrDefault(playerName, 0);
-            
-            EloManager.PlayerResistance pr = new EloManager.PlayerResistance(playerName, resistance);
-            if (team == TeamColor.RED) {
-                gameRedTeam.add(pr);
-            } else if (team == TeamColor.BLUE) {
-                gameBlueTeam.add(pr);
-            }
-        }
-    }
-    
-    /**
      * Give all players obsidian and flint-and-steel for Nether portal building
      */
     private void supplyNetherPortalItems() {
@@ -241,11 +225,8 @@ public class GameManager {
         gameActive = false;
         gamePaused = false;
         
-        // Clear team assignments for next game
-        playerTeamAssignment.clear();
-        playerAssignedResistance.clear();
-        gameRedTeam.clear();
-        gameBlueTeam.clear();
+        // Clear all team data
+        clearAllTeams();
         
         Bukkit.broadcast(Component.text("[Beacon War] ", NamedTextColor.AQUA)
                 .append(Component.text("Game stopped!", NamedTextColor.YELLOW)));
@@ -260,11 +241,8 @@ public class GameManager {
         gameActive = false;
         gamePaused = false;
         
-        // Clear team assignments
-        playerTeamAssignment.clear();
-        playerAssignedResistance.clear();
-        gameRedTeam.clear();
-        gameBlueTeam.clear();
+        // Clear all team data
+        clearAllTeams();
         
         // Clear beacon state
         if (beaconManager != null) {
@@ -325,12 +303,23 @@ public class GameManager {
                     .append(Component.text(winnerName + " WINS!", winnerColor)));
         }
         
+        // Build PlayerResistance lists from roster sets and current resistance values
+        List<EloManager.PlayerResistance> redTeamRoster = gameRedTeam.stream()
+                .map(name -> new EloManager.PlayerResistance(name, playerAssignedResistance.getOrDefault(name, 0)))
+                .collect(Collectors.toList());
+        List<EloManager.PlayerResistance> blueTeamRoster = gameBlueTeam.stream()
+                .map(name -> new EloManager.PlayerResistance(name, playerAssignedResistance.getOrDefault(name, 0)))
+                .collect(Collectors.toList());
+        
         // Update ELO ratings (only if not a tie and we have rosters)
-        if (winner != TeamColor.NEUTRAL && !gameRedTeam.isEmpty() && !gameBlueTeam.isEmpty()) {
-            double loss = eloManager.updateRatings(gameRedTeam, gameBlueTeam, winner);
+        if (winner != TeamColor.NEUTRAL && !redTeamRoster.isEmpty() && !blueTeamRoster.isEmpty()) {
+            double loss = eloManager.updateRatings(redTeamRoster, blueTeamRoster, winner);
             Bukkit.broadcast(Component.text("[Beacon War ELO] ", NamedTextColor.GOLD)
                     .append(Component.text("Ratings updated! Loss: " + String.format("%.3f", loss), NamedTextColor.YELLOW)));
         }
+        
+        // Log game result
+        logGameResult(winner, redTeamRoster, blueTeamRoster);
         
         // Show final results (scores only in score mode, beacons in beacon_count mode)
         String winCondition = plugin.getConfig().getString("win-condition", "score");
@@ -343,6 +332,27 @@ public class GameManager {
             Bukkit.broadcast(Component.text("[Beacon War] ", NamedTextColor.AQUA)
                     .append(Component.text("Final Beacons - Red: " + counts.get(TeamColor.RED) + 
                             " | Blue: " + counts.get(TeamColor.BLUE), NamedTextColor.WHITE)));
+        }
+        
+        // Clear all team data (after ELO calculation)
+        clearAllTeams();
+    }
+    
+    /**
+     * Clear all team data - internal rosters, assignments, and vanilla scoreboard teams.
+     */
+    private void clearAllTeams() {
+        playerTeamAssignment.clear();
+        playerAssignedResistance.clear();
+        gameRedTeam.clear();
+        gameBlueTeam.clear();
+        
+        // Clear vanilla scoreboard teams
+        for (String entry : new HashSet<>(redTeam.getEntries())) {
+            redTeam.removeEntry(entry);
+        }
+        for (String entry : new HashSet<>(blueTeam.getEntries())) {
+            blueTeam.removeEntry(entry);
         }
     }
     
@@ -618,6 +628,9 @@ public class GameManager {
             player.setScoreboard(scoreboard);
         }
         
+        // Sync team definitions to this scoreboard for proper name coloring
+        syncTeamsToScoreboard(scoreboard);
+        
         // Clear and recreate the objective
         org.bukkit.scoreboard.Objective objective = scoreboard.getObjective("beaconwar");
         if (objective != null) {
@@ -716,6 +729,40 @@ public class GameManager {
     }
     
     /**
+     * Sync team definitions and entries to a player's personal scoreboard.
+     * This ensures player names display in their team's color for all viewers.
+     */
+    private void syncTeamsToScoreboard(Scoreboard scoreboard) {
+        // Get or create red team
+        Team red = scoreboard.getTeam("bw_red");
+        if (red == null) {
+            red = scoreboard.registerNewTeam("bw_red");
+        }
+        red.displayName(Component.text("Red Team", NamedTextColor.RED));
+        red.color(NamedTextColor.RED);
+        
+        // Get or create blue team
+        Team blue = scoreboard.getTeam("bw_blue");
+        if (blue == null) {
+            blue = scoreboard.registerNewTeam("bw_blue");
+        }
+        blue.displayName(Component.text("Blue Team", NamedTextColor.BLUE));
+        blue.color(NamedTextColor.BLUE);
+        
+        // Sync entries from main scoreboard teams
+        for (String entry : redTeam.getEntries()) {
+            if (!red.hasEntry(entry)) {
+                red.addEntry(entry);
+            }
+        }
+        for (String entry : blueTeam.getEntries()) {
+            if (!blue.hasEntry(entry)) {
+                blue.addEntry(entry);
+            }
+        }
+    }
+    
+    /**
      * Enforce limit of one inventory slot per material for red/blue wool and glass
      * Hotbar slots are preferentially kept over other inventory slots
      */
@@ -728,13 +775,14 @@ public class GameManager {
     private void enforcePlayerSlotLimits(Player player) {
         org.bukkit.inventory.PlayerInventory inv = player.getInventory();
         
-        // Materials to limit - red/blue wool/glass and torches
+        // Materials to limit - red/blue wool/glass, torches, and arrows
         Material[] limitedMaterials = {
             Material.RED_WOOL,
             Material.BLUE_WOOL,
             Material.RED_STAINED_GLASS,
             Material.BLUE_STAINED_GLASS,
-            Material.TORCH
+            Material.TORCH,
+            Material.ARROW
         };
         
         for (Material material : limitedMaterials) {
@@ -915,29 +963,30 @@ public class GameManager {
                 player.getInventory().addItem(pickaxe);
             }
             
-            // Supply Infinity, Power I, Punch I bow
+            // Supply Infinity bow with configurable Power and Punch
             if (!hasBow(player.getInventory())) {
                 ItemStack bow = new ItemStack(Material.BOW);
                 Enchantment infinity = Enchantment.getByKey(NamespacedKey.minecraft("infinity"));
                 Enchantment power = Enchantment.getByKey(NamespacedKey.minecraft("power"));
                 Enchantment punch = Enchantment.getByKey(NamespacedKey.minecraft("punch"));
+                int powerLevel = plugin.getConfig().getInt("bow-power-level", 1);
+                int punchLevel = plugin.getConfig().getInt("bow-punch-level", 1);
                 if (infinity != null) bow.addEnchantment(infinity, 1);
-                if (power != null) bow.addEnchantment(power, 1); //12 damage (6 hearts)
-                if (punch != null) bow.addEnchantment(punch, 1);
+                if (power != null && powerLevel > 0) bow.addEnchantment(power, powerLevel);
+                if (punch != null && punchLevel > 0) bow.addEnchantment(punch, punchLevel);
                 player.getInventory().addItem(bow);
-                
-                // Also give 1 arrow for infinity bow
-                if (!player.getInventory().contains(Material.ARROW)) {
-                    player.getInventory().addItem(new ItemStack(Material.ARROW, 1));
-                }
             }
             
-            // Supply Piercing I crossbow
+            // Supply Piercing I, Infinity crossbow
             if (!hasCrossbow(player.getInventory())) {
                 ItemStack crossbow = new ItemStack(Material.CROSSBOW);
                 Enchantment piercing = Enchantment.getByKey(NamespacedKey.minecraft("piercing"));
+                Enchantment infinity = Enchantment.getByKey(NamespacedKey.minecraft("infinity"));
                 if (piercing != null) {
-                    crossbow.addEnchantment(piercing, 1);
+                    crossbow.addUnsafeEnchantment(piercing, 1);
+                }
+                if (infinity != null) {
+                    crossbow.addUnsafeEnchantment(infinity, 1);
                 }
                 player.getInventory().addItem(crossbow);
             }
@@ -945,6 +994,11 @@ public class GameManager {
             // Supply Compass
             if (!player.getInventory().contains(Material.COMPASS)) {
                 player.getInventory().addItem(new ItemStack(Material.COMPASS));
+            }
+            
+            // Supply arrows (auto-resupplied like wool)
+            if (!player.getInventory().contains(Material.ARROW)) {
+                player.getInventory().addItem(new ItemStack(Material.ARROW, 64));
             }
         }
     }
@@ -1072,15 +1126,19 @@ public class GameManager {
         blueTeam.removeEntry(playerName);
         playerTeamAssignment.remove(playerName);
         
-        // Add to selected team
+        // Add to selected team and game roster
         switch (team) {
             case RED -> {
                 redTeam.addEntry(playerName);
                 playerTeamAssignment.put(playerName, TeamColor.RED);
+                gameRedTeam.add(playerName);
+                gameBlueTeam.remove(playerName);
             }
             case BLUE -> {
                 blueTeam.addEntry(playerName);
                 playerTeamAssignment.put(playerName, TeamColor.BLUE);
+                gameBlueTeam.add(playerName);
+                gameRedTeam.remove(playerName);
             }
             default -> {}
         }
@@ -1185,6 +1243,62 @@ public class GameManager {
         long minutes = seconds / 60;
         long secs = seconds % 60;
         return String.format("%d:%02d", minutes, secs);
+    }
+    
+    /**
+     * Log game result to a file for historical record.
+     */
+    private void logGameResult(TeamColor winner, List<EloManager.PlayerResistance> redTeamRoster, 
+                               List<EloManager.PlayerResistance> blueTeamRoster) {
+        File logFile = new File(plugin.getDataFolder(), "game_history.log");
+        
+        try (PrintWriter writer = new PrintWriter(new FileWriter(logFile, true))) {
+            DateTimeFormatter formatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
+            String timestamp = LocalDateTime.now().format(formatter);
+            
+            writer.println("=== Game Result: " + timestamp + " ===");
+            writer.println("Winner: " + (winner == TeamColor.NEUTRAL ? "TIE" : winner.name()));
+            
+            // Log final scores
+            String winCondition = plugin.getConfig().getString("win-condition", "score");
+            if (winCondition.equalsIgnoreCase("score")) {
+                writer.println("Final Scores - Red: " + scoreManager.getScore(TeamColor.RED) + 
+                        " | Blue: " + scoreManager.getScore(TeamColor.BLUE));
+            }
+            if (beaconManager != null) {
+                Map<TeamColor, Integer> counts = beaconManager.getTeamCounts();
+                writer.println("Final Beacons - Red: " + counts.get(TeamColor.RED) + 
+                        " | Blue: " + counts.get(TeamColor.BLUE));
+            }
+            
+            // Log teams
+            writer.println("Red Team: " + formatTeamForLog(redTeamRoster));
+            writer.println("Blue Team: " + formatTeamForLog(blueTeamRoster));
+            
+            // Log current ELO state (human readable)
+            writer.println("--- ELO Ratings After Game ---");
+            writer.println("Alpha: " + String.format("%.4f", eloManager.getAlpha()));
+            writer.println("Beta: " + String.format("%.4f", eloManager.getBeta()));
+            writer.println("Player Ratings:");
+            for (Map.Entry<String, Double> entry : eloManager.getLeaderboard()) {
+                writer.println("  " + entry.getKey() + ": " + String.format("%.4f", entry.getValue()) + 
+                        " (" + (int)(entry.getValue() * 1000) + ")");
+            }
+            
+            // Log raw JSON (copy-paste to elo_ratings.json to restore this state)
+            writer.println("--- Raw JSON (for restoration) ---");
+            writer.println(eloManager.toJson());
+            writer.println();
+            
+        } catch (IOException e) {
+            plugin.getLogger().warning("Failed to write game history log: " + e.getMessage());
+        }
+    }
+    
+    private String formatTeamForLog(List<EloManager.PlayerResistance> team) {
+        return team.stream()
+                .map(pr -> pr.resistance > 0 ? pr.playerName + ":" + pr.resistance : pr.playerName)
+                .collect(Collectors.joining(", "));
     }
     
     public void cleanup() {

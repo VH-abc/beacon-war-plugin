@@ -79,3 +79,10 @@ spawn-castle-gates: false
 # Portals are placed a few blocks away from each beacon
 spawn-nether-portals: true
 
+# Bow Enchantment Levels
+# Power level for the auto-supplied bow (0-5, default: 1)
+# Power I = 12 damage (6 hearts), Power V = 23 damage (11.5 hearts)
+bow-power-level: 1
+# Punch level for the auto-supplied bow (0-2, default: 1)
+bow-punch-level: 1
+

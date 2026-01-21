@@ -247,10 +247,14 @@ public class EloManager {
         logBeta -= LEARNING_RATE * gradBeta;
         
         // Gradient for player ratings (only players in this game)
+        // IMPORTANT: Compute all gradients FIRST, then apply all updates
+        // This ensures symmetric players get symmetric updates
         Set<String> allPlayers = new HashSet<>();
         for (PlayerResistance pr : redTeam) allPlayers.add(pr.playerName);
         for (PlayerResistance pr : blueTeam) allPlayers.add(pr.playerName);
         
+        // Collect all gradients first
+        Map<String, Double> playerGradients = new HashMap<>();
         for (String playerName : allPlayers) {
             double originalLogRating = logPlayerRatings.get(playerName);
             
@@ -264,9 +268,42 @@ public class EloManager {
             lossMinus = calculateLoss(redTeam, blueTeam, redWon, 
                     logPlayerRatings, getAlpha(), getBeta());
             
-            // Restore and update
+            // Restore original value (don't update yet!)
+            logPlayerRatings.put(playerName, originalLogRating);
+            
+            // Store gradient
             double gradRating = (lossPlus - lossMinus) / (2 * EPSILON);
-            logPlayerRatings.put(playerName, originalLogRating - LEARNING_RATE * gradRating);
+            playerGradients.put(playerName, gradRating);
+        }
+        
+        // Calculate sum of ratings BEFORE gradient update (for normalization)
+        double sumBefore = 0.0;
+        for (String playerName : allPlayers) {
+            sumBefore += Math.exp(logPlayerRatings.get(playerName));
+        }
+        
+        // Apply all gradient updates after all gradients have been computed
+        for (Map.Entry<String, Double> entry : playerGradients.entrySet()) {
+            String playerName = entry.getKey();
+            double grad = entry.getValue();
+            double originalLogRating = logPlayerRatings.get(playerName);
+            logPlayerRatings.put(playerName, originalLogRating - LEARNING_RATE * grad);
+        }
+        
+        // Calculate sum of ratings AFTER gradient update
+        double sumAfter = 0.0;
+        for (String playerName : allPlayers) {
+            sumAfter += Math.exp(logPlayerRatings.get(playerName));
+        }
+        
+        // Renormalize: multiply all involved players' ratings by (sumBefore / sumAfter)
+        // In log space: add log(sumBefore / sumAfter) = log(sumBefore) - log(sumAfter)
+        if (sumAfter > 0) {
+            double logNormFactor = Math.log(sumBefore) - Math.log(sumAfter);
+            for (String playerName : allPlayers) {
+                double currentLogRating = logPlayerRatings.get(playerName);
+                logPlayerRatings.put(playerName, currentLogRating + logNormFactor);
+            }
         }
         
         // Save updated ratings
@@ -510,6 +547,17 @@ public class EloManager {
         } catch (IOException e) {
             plugin.getLogger().warning("Failed to load ELO ratings: " + e.getMessage());
         }
+    }
+    
+    /**
+     * Get the raw JSON representation of the ELO state (for logging/backup).
+     */
+    public String toJson() {
+        Map<String, Object> data = new HashMap<>();
+        data.put("logAlpha", logAlpha);
+        data.put("logBeta", logBeta);
+        data.put("logPlayerRatings", logPlayerRatings);
+        return gson.toJson(data);
     }
     
     @Override

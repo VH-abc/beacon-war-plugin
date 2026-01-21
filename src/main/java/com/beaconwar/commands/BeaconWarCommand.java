@@ -498,7 +498,7 @@ public class BeaconWarCommand implements CommandExecutor, TabCompleter {
                 .append(Component.text(" - View ratings", NamedTextColor.GRAY)));
         player.sendMessage(Component.text("/quicklaunch [manual] [minutes]", NamedTextColor.YELLOW)
                 .append(Component.text(" - Auto setup, balance, countdown, start", NamedTextColor.GRAY)));
-        player.sendMessage(Component.text("/balanced_teams", NamedTextColor.YELLOW)
+        player.sendMessage(Component.text("/balancedteams", NamedTextColor.YELLOW)
                 .append(Component.text(" - Preview balanced team assignments", NamedTextColor.GRAY)));
         player.sendMessage(Component.text("/status", NamedTextColor.YELLOW)
                 .append(Component.text(" - Show game status", NamedTextColor.GRAY)));
@@ -516,7 +516,7 @@ public class BeaconWarCommand implements CommandExecutor, TabCompleter {
         // Handle /bw subcommands
         if (args.length == 1) {
             return Arrays.asList("setup", "start", "stop", "reset", "end", "pause", "unpause", 
-                    "join", "resistance", "elo", "quicklaunch", "balanced_teams", "status", "help");
+                    "join", "resistance", "elo", "quicklaunch", "balancedteams", "status", "help");
         }
         
         return getTabCompletionsForCommand(args[0].toLowerCase(), Arrays.copyOfRange(args, 1, args.length));

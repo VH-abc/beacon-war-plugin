@@ -1,12 +1,12 @@
 package com.beaconwar.game;
 
-import com.beaconwar.model.Beacon;
-import com.beaconwar.model.TeamColor;
-import org.bukkit.Location;
-
 import java.util.Comparator;
 import java.util.List;
-import java.util.Map;
+
+import org.bukkit.Location;
+
+import com.beaconwar.model.Beacon;
+import com.beaconwar.model.TeamColor;
 
 /**
  * Manages team spawn points based on beacon control.
@@ -52,15 +52,28 @@ public class SpawnManager {
            int homeBeaconIndex = (team == TeamColor.RED) ? 5 : -5;
            Beacon homeBeacon = beaconManager.getBeacon(homeBeaconIndex);
            Location loc = homeBeacon.getLocation().clone();
-           // if red, add spacing to the x coordinate, if blue, subtract spacing from the x coordinate
-           if (team == TeamColor.RED) {
-            loc.add(spacing, 0, 0);
-           } else {
-            loc.add(-spacing, 0, 0);
+           
+           // Direction to move: red moves +X, blue moves -X
+           int direction = (team == TeamColor.RED) ? 1 : -1;
+           loc.add(spacing * direction, 0, 0);
+           
+           // Ground search settings
+           boolean isNether = loc.getWorld().getEnvironment() == org.bukkit.World.Environment.NETHER;
+           int groundSearchY = isNether ? 100 : 200;
+           
+           // Try to find ground, moving 10 blocks farther back each attempt
+           for (int attempt = 0; attempt < 100; attempt++) {
+               int searchX = loc.getBlockX() + (attempt * 10 * direction);
+               Location groundLoc = BeaconPlacer.findGround(loc.getWorld(), searchX, groundSearchY, loc.getBlockZ());
+               if (groundLoc != null) {
+                   return groundLoc.add(0, 1, 0);
+               }
            }
-           // find ground block below loc, using BeaconPlacer.findGround
-           Location groundLoc = BeaconPlacer.findGround(loc.getWorld(), loc.getBlockX(), 200, loc.getBlockZ());
-           return groundLoc.add(0, 1, 0);
+           
+           // All 100 attempts failed - spawn on nether roof as last resort
+           org.bukkit.Bukkit.broadcast(net.kyori.adventure.text.Component.text("[Beacon War] ", net.kyori.adventure.text.format.NamedTextColor.RED)
+                   .append(net.kyori.adventure.text.Component.text("Warning: Could not find valid spawn ground for " + team.name() + " team. Spawning on Nether roof!", net.kyori.adventure.text.format.NamedTextColor.YELLOW)));
+           return new Location(loc.getWorld(), loc.getBlockX(), 128, loc.getBlockZ());
         }
         
         Beacon secondFurthest = teamBeacons.get(1);

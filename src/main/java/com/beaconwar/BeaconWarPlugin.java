@@ -7,6 +7,7 @@ import com.beaconwar.commands.NetherCommand;
 import com.beaconwar.commands.OverworldCommand;
 import com.beaconwar.game.GameManager;
 import com.beaconwar.listeners.BeaconChangeListener;
+import com.beaconwar.listeners.CommandBlockListener;
 import com.beaconwar.listeners.DeathListener;
 import com.beaconwar.listeners.PlayerConnectionListener;
 
@@ -30,7 +31,7 @@ public class BeaconWarPlugin extends JavaPlugin {
         
         // Register direct commands (without /bw prefix)
         String[] directCommands = {"setup", "start", "stop", "reset", "end", "pause", "unpause", 
-                                   "join", "resistance", "elo", "quicklaunch", "balanced_teams", "status"};
+                                   "join", "resistance", "elo", "quicklaunch", "balancedteams", "status"};
         for (String cmd : directCommands) {
             getCommand(cmd).setExecutor(bwCommand);
             getCommand(cmd).setTabCompleter(bwCommand);
@@ -38,6 +39,7 @@ public class BeaconWarPlugin extends JavaPlugin {
         
         // Register listeners
         getServer().getPluginManager().registerEvents(new BeaconChangeListener(this), this);
+        getServer().getPluginManager().registerEvents(new CommandBlockListener(this), this);
         getServer().getPluginManager().registerEvents(new DeathListener(this), this);
         getServer().getPluginManager().registerEvents(new PlayerConnectionListener(this), this);
         
